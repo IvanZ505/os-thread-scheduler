@@ -15,26 +15,27 @@ double avg_resp_time=0;
 
 // INITAILIZE ALL YOUR OTHER VARIABLES HERE
 // YOUR CODE HERE
+Node* head;
 context_t scheduler_ctx, main_ctx;
 
 // @TODO: need to add freeing for the TCB blocks and the stacks inside.
 
-Node* queue(Node* head, Node* tcb_block) {
+int queue(Node* tcb_block) {
 	if (head == NULL) {
 		head = tcb_block;
 		head->next = head;
-		return head;
+		return 0;
 	}
 
 	tcb_block->next = head->next;
 	head.next = tcb_block;
 
 	head = head->next;
-	return head;
+	return 0;
 }
 
 
-int dequeue(Node* head, Node* tcb_block) {
+int dequeue(Node* tcb_block) {
     if (*head == NULL) {
         // List is empty, nothing to dequeue
         return -1; // Indicate failure
@@ -66,7 +67,7 @@ int dequeue(Node* head, Node* tcb_block) {
 	return -1; // Indicate failure
 }
 
-void printList(Node* head) {
+void printList() {
 	if (*head == NULL) {
 		printf("List is empty\n");
 		return;
@@ -83,18 +84,19 @@ void printList(Node* head) {
 	printf("\n");
 }
 
-int freeList(Node* head) {
+// Last thing to run for freeing!!
+int freeList() {
 	if (*head == NULL) {
 		return -1; // Indicate failure
 	}
 
-	Node *current = head, *next = NULL;
+	Node *current = head->next;
 	while (current != head) {
-		next = current->next;
 		free(current);
-		current = next;
+		current = current->next;
 	}
 
+	free(head);
 	*head = NULL; // List is now empty
 	return 0;     // Indicate success
 }
@@ -149,7 +151,9 @@ int worker_create(worker_t * thread, pthread_attr_t * attr,
     	return -1;
 	}
 
-	queue(block);
+	Node* tcb_block = (Node *)malloc(sizeof(Node));
+	tcb_block->block = block;
+	queue(tcb_block);
     return 0;
 };
 
@@ -161,9 +165,15 @@ int worker_setschedprio(worker_t thread, int prio) {
 
    // Set the priority value to your thread's TCB
    // YOUR CODE HERE
-
-   return 0;	
-
+   Node* ptr = head.next;
+	while(ptr != head && ptr->block->thread_id != thread) {
+		ptr = ptr->next;
+	}
+	if(ptr->block->thread_id == thread) {
+		ptr->block->priority = prio;
+		return 0;	// Successfully set
+	}
+	return -1;	// Failed to set
 }
 #endif
 
