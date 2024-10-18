@@ -15,11 +15,17 @@ double avg_resp_time=0;
 
 // INITAILIZE ALL YOUR OTHER VARIABLES HERE
 // YOUR CODE HERE
-
+context_t scheduler_ctx, main_ctx;
 
 // @TODO: need to add freeing for the TCB blocks and the stacks inside.
 
 Node* queue(Node* head, Node* tcb_block) {
+	if (head == NULL) {
+		head = tcb_block;
+		head->next = head;
+		return head;
+	}
+
 	tcb_block->next = head->next;
 	head.next = tcb_block;
 
@@ -104,6 +110,23 @@ int worker_create(worker_t * thread, pthread_attr_t * attr,
        // - make it ready for the execution.
 
        // YOUR CODE HERE
+
+	if(schedule_ctx == NULL) {
+		// Initialize the main context
+		main_ctx.uc_link = NULL;
+		main_ctx.uc_stack.ss_sp = malloc(STACK_SIZE);
+		main_ctx.uc_stack.ss_size = STACK_SIZE;
+		main_ctx.uc_stack.ss_flags = 0;
+		makecontext(&main_ctx, (void (*)(void))main, 0);
+
+		// Initialize the scheduler context
+		scheduler_ctx.uc_link = NULL;
+		scheduler_ctx.uc_stack.ss_sp = malloc(STACK_SIZE);
+		scheduler_ctx.uc_stack.ss_size = STACK_SIZE;
+		scheduler_ctx.uc_stack.ss_flags = 0;
+		makecontext(&scheduler_ctx, (void (*)(void))schedule, 0);
+	}
+	
 	TCB *block = (TCB *)malloc(sizeof(TCB));
 	ucontext_t cctx;
 	block->stack = malloc(STACK_SIZE);
@@ -112,7 +135,7 @@ int worker_create(worker_t * thread, pthread_attr_t * attr,
     	return -1;
 	}
 	cctx.uc_stack.ss_sp = block->stack;
-	cctx.uc_link=NULL;
+	cctx.uc_link=&scheduler_ctx;
 	cctx.uc_stack.ss_size=STACK_SIZE;
 	cctx.uc_stack.ss_flags=0;
 	block->context = &cctx;
