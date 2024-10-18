@@ -15,8 +15,9 @@ double avg_resp_time=0;
 
 // INITAILIZE ALL YOUR OTHER VARIABLES HERE
 // YOUR CODE HERE
-Node* head;
-context_t scheduler_ctx, main_ctx;
+extern Node* head;
+extern Node* curr;
+extern ucontext_t scheduler_ctx, main_ctx;
 
 // @TODO: need to add freeing for the TCB blocks and the stacks inside.
 
@@ -187,8 +188,12 @@ int worker_yield() {
 	// - switch from thread context to scheduler context
 
 	// YOUR CODE HERE
-	context_t* cctx;
+	ucontext_t* cctx;
 	getcontext(cctx);
+	// Might not work? What happens with the stack pointer?
+	curr->block->status = enum status Ready;
+	free(curr->block->context);
+	curr->block->context = cctx;
 
 	swapcontext(cctx, &scheduler_ctx);
 	return 0;
