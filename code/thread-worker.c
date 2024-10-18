@@ -28,16 +28,29 @@ int worker_create(worker_t * thread, pthread_attr_t * attr,
        // - make it ready for the execution.
 
        // YOUR CODE HERE
-	TCB block = new TCB();
-	ucontext_t* context = malloc(sizeof(ucontext_t));
-	block->context = context;
-	context = new ucontext_t();
-	block->status = Ready;
-	block->priority = 1;
-	block->thread_id = *thread;
-	block->stack = new char[SIGSTKSZ];
-	getcontext(context);
+	TCB *block = (TCB *)malloc(sizeof(TCB));
+	ucontext_t cctx;
+	block->stack = malloc(STACK_SIZE);
+	if (block->stack == NULL) {
+    	perror("Failed to allocate stack");
+    	return -1;
+	}
+	cctx.uc_stack.ss_sp = block->stack;
+	cctx.uc_link=NULL;
+	cctx.uc_stack.ss_size=STACK_SIZE;
+	cctx.uc_stack.ss_flags=0;
+	block->context = &cctx;
 
+	block->status = enum status Ready;
+	block->priority = 4;
+	block->thread_id = *thread;
+	makecontext(&block->context, (void (*)(void))function, 1, arg);
+	if (getcontext(&block->context) < 0) {
+		perror("getcontext failed");
+    	return -1;
+	}
+
+	queue(block);
     return 0;
 };
 

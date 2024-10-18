@@ -42,7 +42,7 @@ typedef struct TCB {
 	int thread_id;
 	enum status status;
 	ucontext_t* context;
-	char[] stack;
+	char* stack;
 	int priority;
 } tcb; 
 
