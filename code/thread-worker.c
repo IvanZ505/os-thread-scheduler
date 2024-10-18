@@ -17,6 +17,82 @@ double avg_resp_time=0;
 // YOUR CODE HERE
 
 
+// @TODO: need to add freeing for the TCB blocks and the stacks inside.
+
+Node* queue(Node* head, Node* tcb_block) {
+	tcb_block->next = head->next;
+	head.next = tcb_block;
+
+	head = head->next;
+	return head;
+}
+
+
+int dequeue(Node* head, Node* tcb_block) {
+    if (*head == NULL) {
+        // List is empty, nothing to dequeue
+        return -1; // Indicate failure
+    }
+
+    Node *current = *head, *prev = NULL;
+
+    // Case 1: If the node to be removed is the only node in the list
+    if (current == tcb_block && current->next == current) {
+		// Free TCB block
+        free(current);
+        *head = NULL; // List is now empty
+        return 0;     // Indicate success
+    }
+
+    // Traverse the list to find the node to delete
+    while(current != head && current != tcb_block) {
+		prev = current;
+		current = current->next;
+	}
+
+	if (current == tcb_block) {
+		prev->next = current->next;
+		free(current);
+		return 0; // Indicate success
+	}
+
+	// If we reach here, the node was not found in the list
+	return -1; // Indicate failure
+}
+
+void printList(Node* head) {
+	if (*head == NULL) {
+		printf("List is empty\n");
+		return;
+	}
+
+	Node *current = head;
+	while (current != head) {
+		printf("%d ", current->block->thread_id);
+		if(current->next != head) {
+			printf("-> ");
+		}
+		current = current->next;
+	}
+	printf("\n");
+}
+
+int freeList(Node* head) {
+	if (*head == NULL) {
+		return -1; // Indicate failure
+	}
+
+	Node *current = head, *next = NULL;
+	while (current != head) {
+		next = current->next;
+		free(current);
+		current = next;
+	}
+
+	*head = NULL; // List is now empty
+	return 0;     // Indicate success
+}
+
 /* create a new thread */
 int worker_create(worker_t * thread, pthread_attr_t * attr, 
                       void *(*function)(void*), void * arg) {
