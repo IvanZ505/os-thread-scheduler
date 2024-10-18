@@ -187,7 +187,10 @@ int worker_yield() {
 	// - switch from thread context to scheduler context
 
 	// YOUR CODE HERE
-	
+	context_t* cctx;
+	getcontext(cctx);
+
+	swapcontext(cctx, &scheduler_ctx);
 	return 0;
 };
 

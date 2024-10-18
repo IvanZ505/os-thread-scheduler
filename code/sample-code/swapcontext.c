@@ -49,6 +49,7 @@ int main(int argc, char **argv) {
 	
 	/* swap context will activate cctx and store location after swapcontext in nctx */
 	swapcontext(&nctx,&cctx);
+	
 
 	/* PC value in nctx will point to here */
 	puts("swap  context executed correctly \n");
