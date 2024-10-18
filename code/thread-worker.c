@@ -28,7 +28,15 @@ int worker_create(worker_t * thread, pthread_attr_t * attr,
        // - make it ready for the execution.
 
        // YOUR CODE HERE
-
+	TCB block = new TCB();
+	ucontext_t* context = malloc(sizeof(ucontext_t));
+	block->context = context;
+	context = new ucontext_t();
+	block->status = Ready;
+	block->priority = 1;
+	block->thread_id = *thread;
+	block->stack = new char[SIGSTKSZ];
+	getcontext(context);
 
     return 0;
 };

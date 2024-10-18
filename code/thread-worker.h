@@ -41,8 +41,8 @@ typedef struct TCB {
 	// YOUR CODE HERE
 	int thread_id;
 	enum status status;
-	ucontext_t context;
-	char[SIGSTKSZ] stack;
+	ucontext_t* context;
+	char[] stack;
 	int priority;
 } tcb; 
 
