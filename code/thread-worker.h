@@ -66,6 +66,18 @@ typedef struct worker_mutex_t {
 
 // YOUR CODE HERE
 
+typedef struct Node {
+	TCB* block;
+	struct Node* next;
+} Node;
+
+int queue(Node* head, Node* tcb_block);
+
+int dequeue(Node* head, Node* tcb_block);
+
+void printList(Node* head);
+
+int freeList(Node* head);
 
 /* Function Declarations: */
 
