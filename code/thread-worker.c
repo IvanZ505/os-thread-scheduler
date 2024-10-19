@@ -3,8 +3,19 @@
 // List all group member's name:
 // username of iLab:
 // iLab Server:
+#include <stdio.h>
+#include <stdlib.h>
+#include <signal.h>
+#include <sys/time.h>
+#include <sys/types.h>
+#include <unistd.h>
+#include <ucontext.h>
+#include <string.h>
+
 
 #include "thread-worker.h"
+
+#define TIME_QUANTUM 1
 
 //Global counter for total context switches and 
 //average turn around and response time
@@ -19,12 +30,11 @@ double avg_resp_time=0;
 // TODO: Check extern stuff later
 Node* runq_last;
 Node* runq_curr;
+
 ucontext_t scheduler_ctx, main_ctx;
 
 int scheduler_initialized = 0;
 
-// main function block
-int main();
 // scheduler
 static void schedule();
 
@@ -57,7 +67,6 @@ int dequeue(Node** last, Node* tcb_node) {
 
     // Case 1: If the node to be removed is the only node in the list
     if (current == tcb_node && current->next == current) {
-				printf("1");
 		// Free TCB block
 		free(current->block->stack);
 		free(current->block);
@@ -68,13 +77,11 @@ int dequeue(Node** last, Node* tcb_node) {
 
     // Traverse the list to find the node to delete
     while(current != *last && current != tcb_node) {
-		printf("nodes: %d", + current->block->thread_id);
 		prev = current;
 		current = current->next;
 	}
 
 	if (current == tcb_node) {
-		printf("found it");
 		prev->next = current->next;
 		free(current->block->stack);
 		free(current->block);
@@ -125,6 +132,72 @@ int freeList(Node** last) {
 	return 0;     // Indicate success
 }
 
+/* Handles swapping contexts when a time quantum elapses */
+void context_switch(int signum) {
+	printf("ALARM\n");
+	printf("ALARM\n");
+	printf("ALARM\n");
+	printf("ALARM\n");
+	printf("ALARM\n");
+	swapcontext(runq_curr->block->context, &scheduler_ctx);
+}
+
+/* Initializes the library and timer */
+void thread_init() {
+	// Initialize the scheduler context
+
+	if (getcontext(&scheduler_ctx) < 0){
+		perror("getcontext");
+		exit(1);
+	}
+
+	scheduler_ctx.uc_link = NULL;
+	scheduler_ctx.uc_stack.ss_sp = malloc(STACK_SIZE);
+	scheduler_ctx.uc_stack.ss_size = STACK_SIZE;
+	scheduler_ctx.uc_stack.ss_flags = 0;
+	makecontext(&scheduler_ctx, (void *)&schedule, 0);
+
+	// Initialize timer
+
+	// Copied from given sample, should change a little
+
+	// Use sigaction to register signal handler
+	struct sigaction sa;
+	memset(&sa, 0, sizeof(sa));
+	sa.sa_handler = &context_switch;
+	sigaction (SIGPROF, &sa, NULL);
+	// Create timer struct
+	struct itimerval timer;
+
+	// Set up what the timer should reset to after the timer goes off
+	timer.it_interval.tv_usec = 0; 
+	timer.it_interval.tv_sec = TIME_QUANTUM;
+
+	timer.it_value.tv_usec = 0;
+	timer.it_value.tv_sec = TIME_QUANTUM;
+
+	// Set the timer up (start the timer)
+	setitimer(ITIMER_PROF, &timer, NULL);
+
+	scheduler_initialized = 1;
+}
+
+void worker_wrapper(void * arg){
+	printf("did we get this far?: %d\n", runq_curr->block->thread_id);
+	if (runq_curr) {
+		void* r = runq_curr->block->function(arg);
+	}
+
+	/* will be used for thread_join I think, scheduler should just
+	skip any threads marked as terminated*/
+	runq_curr->block->status = Terminated;
+
+	// Goes back to scheduler
+	context_switch(0);
+
+	// Technically we clean up only after worker_join or worker_exit, but I am not too sure.
+}
+
 /* create a new thread */
 int worker_create(worker_t* thread, pthread_attr_t * attr, 
                       void *(*function)(void*), void * arg) {
@@ -136,24 +209,6 @@ int worker_create(worker_t* thread, pthread_attr_t * attr,
        // - make it ready for the execution.
 
        // YOUR CODE HERE
-
-	if(scheduler_initialized) {
-		// Initialize the main context
-		main_ctx.uc_link = NULL;
-		main_ctx.uc_stack.ss_sp = malloc(STACK_SIZE);
-		main_ctx.uc_stack.ss_size = STACK_SIZE;
-		main_ctx.uc_stack.ss_flags = 0;
-		makecontext(&main_ctx, (void (*)(void))main, 0);
-
-		// Initialize the scheduler context
-		scheduler_ctx.uc_link = NULL;
-		scheduler_ctx.uc_stack.ss_sp = malloc(STACK_SIZE);
-		scheduler_ctx.uc_stack.ss_size = STACK_SIZE;
-		scheduler_ctx.uc_stack.ss_flags = 0;
-		makecontext(&scheduler_ctx, (void (*)(void))schedule, 0);
-
-		scheduler_initialized = 1;
-	}
 	
 	tcb *block = (tcb *)malloc(sizeof(tcb));
 	ucontext_t cctx;
@@ -162,6 +217,12 @@ int worker_create(worker_t* thread, pthread_attr_t * attr,
     	perror("Failed to allocate stack");
     	return -1;
 	}
+
+	if (getcontext(&cctx) < 0){
+		perror("getcontext");
+		exit(1);
+	}
+
 	cctx.uc_stack.ss_sp = block->stack;
 	cctx.uc_link=&scheduler_ctx;
 	cctx.uc_stack.ss_size=STACK_SIZE;
@@ -171,13 +232,20 @@ int worker_create(worker_t* thread, pthread_attr_t * attr,
 	block->status = Ready;
 	block->priority = 4;
 	block->thread_id = *thread;
+	block->function = function;
 
-	makecontext(block->context, (void (*)(void))function, 1, arg);
+	makecontext(&cctx, (void *)&worker_wrapper, 1, arg);
 
 	Node* tcb_block = (Node *)malloc(sizeof(Node));
 	tcb_block->block = block;
 	queue(&runq_last, tcb_block);
 
+	runq_curr = tcb_block;
+
+	if (swapcontext(&main_ctx,runq_curr->block->context) < 0){
+		perror("set current context");
+		exit(1);
+	}
 	// Used to test out LL, remember to delete or move else where
 	// printList(runq_last);
 
@@ -191,6 +259,54 @@ int worker_create(worker_t* thread, pthread_attr_t * attr,
     // return 0;
 };
 
+/* Not sure how to handle the base case, in the sense that when we call
+worker_create from else where, we do not have a way to grab that parent thread to
+then return or context switch from. This is a kind of jank solution which is marking a specific thread
+as the parent/main tread and assuming callers to worker_create are children of this thread */
+int main_worker_create(worker_t* thread, pthread_attr_t * attr, 
+                      void *(*function)(void*), void * arg) {
+	// Initialize the main context
+
+	if(scheduler_initialized == 0) {
+		thread_init();
+	}
+
+	if (getcontext(&main_ctx) < 0){
+		perror("Getcontext failed");
+		exit(1);
+	}
+
+	tcb *block = (tcb *)malloc(sizeof(tcb));
+	block->stack = malloc(STACK_SIZE);
+	if (block->stack == NULL) {
+    	perror("Failed to allocate stack");
+    	return -1;
+	}
+
+	main_ctx.uc_link = NULL;
+	main_ctx.uc_stack.ss_sp = malloc(STACK_SIZE);
+	main_ctx.uc_stack.ss_size = STACK_SIZE;
+	main_ctx.uc_stack.ss_flags = 0;
+	block->context = &main_ctx;
+
+	block->status = Ready;
+	block->priority = 4;
+	block->thread_id = *thread;
+	block->function = function;
+
+	makecontext(&main_ctx,(void *)&function, 0);
+
+	Node* tcb_block = (Node *)malloc(sizeof(Node));
+	tcb_block->block = block;
+	queue(&runq_last, tcb_block);
+
+	runq_curr = tcb_block;
+
+	if (setcontext(&main_ctx) < 0){
+		perror("set current context");
+		exit(1);
+	}
+};
 
 #ifdef MLFQ
 /* This function gets called only for MLFQ scheduling set the worker priority. */
@@ -303,6 +419,13 @@ static void schedule() {
 	// 		sched_mlfq();
 
 	// YOUR CODE HERE
+
+	//temporary round robin scheduler
+	runq_curr = runq_curr->next;
+	printf("running: %d\n",(runq_curr->block->thread_id));
+	setcontext(runq_curr->block->context);
+	// swapcontext(&scheduler_ctx,runq_curr->block->context);
+
 
 // - schedule policy
 #ifndef MLFQ

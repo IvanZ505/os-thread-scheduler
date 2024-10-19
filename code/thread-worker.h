@@ -27,7 +27,8 @@ typedef uint worker_t;
 enum status {
 	Running,
 	Ready,
-	Blocked
+	Blocked,
+	Terminated
 };
 
 typedef struct TCB {
@@ -45,6 +46,7 @@ typedef struct TCB {
 	ucontext_t* context;
 	char* stack;
 	int priority;
+	void *(*function)(void*); 
 } tcb; 	
 
 /* mutex struct definition */
@@ -84,6 +86,10 @@ int freeList(Node** last);
 
 /* create a new thread */
 int worker_create(worker_t * thread, pthread_attr_t * attr, void
+    *(*function)(void*), void * arg);
+
+/* create a main parent thread */
+int main_worker_create(worker_t * thread, pthread_attr_t * attr, void
     *(*function)(void*), void * arg);
 
 /* give CPU pocession to other user level worker threads voluntarily */
