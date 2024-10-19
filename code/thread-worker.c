@@ -15,51 +15,69 @@ double avg_resp_time=0;
 
 // INITAILIZE ALL YOUR OTHER VARIABLES HERE
 // YOUR CODE HERE
-extern Node* head;
-extern Node* curr;
-extern ucontext_t scheduler_ctx, main_ctx;
+
+// TODO: Check extern stuff later
+Node* runq_last;
+Node* runq_curr;
+ucontext_t scheduler_ctx, main_ctx;
+
+int scheduler_initialized = 0;
+
+// main function block
+int main();
+// scheduler
+static void schedule();
 
 // @TODO: need to add freeing for the TCB blocks and the stacks inside.
+// ---Circular Linked List---
 
-int queue(Node* tcb_block) {
-	if (head == NULL) {
-		head = tcb_block;
-		head->next = head;
+// Inserts node to the front of linked list
+int queue(Node** last, Node* tcb_node) {
+	if ((*last) == NULL) {
+		*last = tcb_node;
+		(*last)->next = *last;
 		return 0;
 	}
 
-	tcb_block->next = head->next;
-	head.next = tcb_block;
+	tcb_node->next = (*last)->next;
+	(*last)->next = tcb_node;
 
-	head = head->next;
+	// (*last) = (*last)->next;
 	return 0;
 }
 
 
-int dequeue(Node* tcb_block) {
-    if (*head == NULL) {
+int dequeue(Node** last, Node* tcb_node) {
+    if (last == NULL) {
         // List is empty, nothing to dequeue
         return -1; // Indicate failure
     }
 
-    Node *current = *head, *prev = NULL;
+    Node *current = (*last)->next, *prev = NULL;
 
     // Case 1: If the node to be removed is the only node in the list
-    if (current == tcb_block && current->next == current) {
+    if (current == tcb_node && current->next == current) {
+				printf("1");
 		// Free TCB block
-        free(current);
-        *head = NULL; // List is now empty
+		free(current->block->stack);
+		free(current->block);
+		free(current);
+        *last = NULL; // List is now empty
         return 0;     // Indicate success
     }
 
     // Traverse the list to find the node to delete
-    while(current != head && current != tcb_block) {
+    while(current != *last && current != tcb_node) {
+		printf("nodes: %d", + current->block->thread_id);
 		prev = current;
 		current = current->next;
 	}
 
-	if (current == tcb_block) {
+	if (current == tcb_node) {
+		printf("found it");
 		prev->next = current->next;
+		free(current->block->stack);
+		free(current->block);
 		free(current);
 		return 0; // Indicate success
 	}
@@ -68,42 +86,47 @@ int dequeue(Node* tcb_block) {
 	return -1; // Indicate failure
 }
 
-void printList() {
-	if (*head == NULL) {
+void printList(Node* last) {
+	if (last == NULL) {
 		printf("List is empty\n");
 		return;
 	}
 
-	Node *current = head;
-	while (current != head) {
+	Node *current = last->next;
+	do {
 		printf("%d ", current->block->thread_id);
-		if(current->next != head) {
+		if(current->next != last->next) {
 			printf("-> ");
+		} else {
+			printf("↩");
 		}
 		current = current->next;
-	}
+	} while (current != last->next);
 	printf("\n");
 }
 
 // Last thing to run for freeing!!
-int freeList() {
-	if (*head == NULL) {
+int freeList(Node** last) {
+	if ((*last) == NULL) {
 		return -1; // Indicate failure
 	}
 
-	Node *current = head->next;
-	while (current != head) {
+	Node *current = (*last)->next;
+	while (current != (*last)) {
+		free(current->block->stack);
+		free(current->block);
 		free(current);
 		current = current->next;
 	}
-
-	free(head);
-	*head = NULL; // List is now empty
+	free((*last)->block->stack);
+	free((*last)->block);
+	free(*last);
+	(*last) = NULL; // List is now empty
 	return 0;     // Indicate success
 }
 
 /* create a new thread */
-int worker_create(worker_t * thread, pthread_attr_t * attr, 
+int worker_create(worker_t* thread, pthread_attr_t * attr, 
                       void *(*function)(void*), void * arg) {
 
        // - create Thread Control Block (TCB)
@@ -114,7 +137,7 @@ int worker_create(worker_t * thread, pthread_attr_t * attr,
 
        // YOUR CODE HERE
 
-	if(schedule_ctx == NULL) {
+	if(scheduler_initialized) {
 		// Initialize the main context
 		main_ctx.uc_link = NULL;
 		main_ctx.uc_stack.ss_sp = malloc(STACK_SIZE);
@@ -128,9 +151,11 @@ int worker_create(worker_t * thread, pthread_attr_t * attr,
 		scheduler_ctx.uc_stack.ss_size = STACK_SIZE;
 		scheduler_ctx.uc_stack.ss_flags = 0;
 		makecontext(&scheduler_ctx, (void (*)(void))schedule, 0);
+
+		scheduler_initialized = 1;
 	}
 	
-	TCB *block = (TCB *)malloc(sizeof(TCB));
+	tcb *block = (tcb *)malloc(sizeof(tcb));
 	ucontext_t cctx;
 	block->stack = malloc(STACK_SIZE);
 	if (block->stack == NULL) {
@@ -143,19 +168,27 @@ int worker_create(worker_t * thread, pthread_attr_t * attr,
 	cctx.uc_stack.ss_flags=0;
 	block->context = &cctx;
 
-	block->status = enum status Ready;
+	block->status = Ready;
 	block->priority = 4;
 	block->thread_id = *thread;
-	makecontext(&block->context, (void (*)(void))function, 1, arg);
-	if (getcontext(&block->context) < 0) {
-		perror("getcontext failed");
-    	return -1;
-	}
+
+	makecontext(block->context, (void (*)(void))function, 1, arg);
 
 	Node* tcb_block = (Node *)malloc(sizeof(Node));
 	tcb_block->block = block;
-	queue(tcb_block);
-    return 0;
+	queue(&runq_last, tcb_block);
+
+	// Used to test out LL, remember to delete or move else where
+	// printList(runq_last);
+
+	// if (tcb_block->block->thread_id == 5) {
+	// 	dequeue(&runq_last, runq_last->next->next);
+	// 	printf("\n");
+	// 	printList(runq_last);
+	// } else if (tcb_block->block->thread_id == 9) {
+	// 	freeList(&runq_last);
+	// }
+    // return 0;
 };
 
 
@@ -166,8 +199,8 @@ int worker_setschedprio(worker_t thread, int prio) {
 
    // Set the priority value to your thread's TCB
    // YOUR CODE HERE
-   Node* ptr = head.next;
-	while(ptr != head && ptr->block->thread_id != thread) {
+   Node* ptr = runq_last->next;
+	while(ptr != runq_last && ptr->block->thread_id != thread) {
 		ptr = ptr->next;
 	}
 	if(ptr->block->thread_id == thread) {
@@ -191,9 +224,9 @@ int worker_yield() {
 	ucontext_t* cctx;
 	getcontext(cctx);
 	// Might not work? What happens with the stack pointer?
-	curr->block->status = enum status Ready;
-	free(curr->block->context);
-	curr->block->context = cctx;
+	runq_curr->block->status = Ready;
+	free(runq_curr->block->context);
+	runq_curr->block->context = cctx;
 
 	swapcontext(cctx, &scheduler_ctx);
 	return 0;

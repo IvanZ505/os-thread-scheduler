@@ -20,6 +20,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <ucontext.h>
+#include <signal.h>
 
 typedef uint worker_t;
 
@@ -27,7 +28,7 @@ enum status {
 	Running,
 	Ready,
 	Blocked
-}
+};
 
 typedef struct TCB {
 	/* add important states in a thread control block */
@@ -44,7 +45,7 @@ typedef struct TCB {
 	ucontext_t* context;
 	char* stack;
 	int priority;
-} tcb; 
+} tcb; 	
 
 /* mutex struct definition */
 typedef struct worker_mutex_t {
@@ -67,17 +68,17 @@ typedef struct worker_mutex_t {
 // YOUR CODE HERE
 
 typedef struct Node {
-	TCB* block;
+	tcb* block;
 	struct Node* next;
 } Node;
 
-int queue(Node* head, Node* tcb_block);
+int queue(Node** last, Node* tcb_node);
 
-int dequeue(Node* head, Node* tcb_block);
+int dequeue(Node** last, Node* tcb_node);
 
-void printList(Node* head);
+void printList(Node* last);
 
-int freeList(Node* head);
+int freeList(Node** last);
 
 /* Function Declarations: */
 
