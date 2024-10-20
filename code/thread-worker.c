@@ -145,6 +145,8 @@ int freeList(Node** last) {
 
 /* Handles swapping contexts when a time quantum elapses */
 void context_switch(int signum) {
+	// Do we need to add this
+	// getcontext(runq_curr->block->context);
 	swapcontext(runq_curr->block->context, &scheduler_ctx);
 }
 
@@ -214,7 +216,7 @@ void thread_init() {
 
 void worker_wrapper(void * arg){
 	printf("start of worker wrapper: id %d\n", runq_curr->block->thread_id);
-	if (runq_curr) {
+	if (runq_curr && runq_curr->block->status != Terminated) {
 		void* r = runq_curr->block->function(arg);
 	}
 
@@ -315,6 +317,9 @@ int worker_yield() {
 	// - switch from thread context to scheduler context
 
 	// YOUR CODE HERE
+	runq_curr->block->status = Ready;
+	// Save the context
+	getcontext(runq_curr->block->context);
 	swapcontext(runq_curr->block->context, &scheduler_ctx);
 	return 0;
 };
@@ -322,8 +327,13 @@ int worker_yield() {
 /* terminate a thread */
 void worker_exit(void *value_ptr) {
 	// - de-allocate any dynamic memory created when starting this thread
+	// Swap context first? Before freeing???
+	runq_curr->block->status = Terminated;
+	
+	// set value pointer... TF is this??? do i just set it to 1?
+	*(int *)value_ptr = 1;
 
-	// YOUR CODE HERE
+	swapcontext(runq_curr->block->context, &scheduler_ctx);
 };
 
 
@@ -334,6 +344,33 @@ int worker_join(worker_t thread, void **value_ptr) {
 	// - de-allocate any dynamic memory created by the joining thread
   
 	// YOUR CODE HERE
+	Node* curr = runq_last->next;
+
+	// Traverse the run queue to find the thread with the matching thread_id
+	while (curr != runq_last && curr->block->thread_id != thread) {
+		curr = curr->next;
+	}
+
+	if (curr->block->thread_id != thread) {
+		return -1; // Thread not found
+	}
+	
+	printf("Thread ID: %d\n", curr->block->thread_id);
+
+	// Wait until the thread terminates
+	while (curr->block->status != Terminated) {
+		printf("Waiting for: %d\n", curr->block->thread_id);
+		runq_curr->block->status = Ready;
+		worker_yield(); // Yield CPU while waiting
+	}
+
+	// Deallocate the thread's resources
+	// free(curr->block->stack);
+	// free(curr->block->context);
+	// free(curr->block);
+
+	// Remove from the run queue
+	dequeue(&runq_last, curr);
 	return 0;
 };
 
@@ -343,6 +380,7 @@ int worker_mutex_init(worker_mutex_t *mutex,
 	//- initialize data structures for this mutex
 
 	// YOUR CODE HERE
+
 	return 0;
 };
 
@@ -394,8 +432,13 @@ static void schedule() {
 	// Temporary round robin scheduler
 	while (1) {
 		runq_curr = runq_curr->next;
-		printList(runq_last);
-		swapcontext(&scheduler_ctx, runq_curr->block->context);
+		printf("Switched to thread: %d with status %d\n", runq_curr->block->thread_id, runq_curr->block->status);
+		if(!runq_curr->block->status == Terminated) {
+			runq_curr->block->status = Running;
+			// printList(runq_last);
+			swapcontext(&scheduler_ctx, runq_curr->block->context);
+		}
+		
 // - schedule policy
 #ifndef MLFQ
 	// Choose PSJF
@@ -403,6 +446,7 @@ static void schedule() {
 	// Choose MLFQ
 #endif
 	}
+	// freeList(&runq_last);
 }
 
 /* Pre-emptive Shortest Job First (POLICY_PSJF) scheduling algorithm */
