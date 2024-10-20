@@ -15,25 +15,35 @@ int i = 1;
 int j = 2;
 int k = 3;
 
-void foo(){
-	while (1) {
-		printf("foo\n");
-	}
-}
+// Simple two thread test
+// void foo(){
+// 	while (1) {
+// 		printf("foo\n");
+// 	}
+// }
 
-void bar(){
-	while (1) {
-		printf("bar\n");
-	}
-}
+// void bar(){
+// 	while (1) {
+// 		printf("bar\n");
+// 	}
+// }
+
+// Worker yield test
+// void foo(){
+// 	while (1) {
+// 		printf("foo\n");
+// 		worker_yield();
+// 	}
+// }
+
 
 int main(int argc, char **argv) {
-
 	int fooThread = worker_create(&i, NULL, &foo, NULL);
 	int barThread = worker_create(&j, NULL, &bar, NULL);
 
 	while(1) {
 		printf("main\n");
 	}
+
 	return 0;
 }

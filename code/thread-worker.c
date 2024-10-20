@@ -15,7 +15,7 @@
 
 #include "thread-worker.h"
 
-#define TIME_QUANTUM 1
+#define TIME_QUANTUM 100
 
 //Global counter for total context switches and 
 //average turn around and response time
@@ -200,11 +200,11 @@ void thread_init() {
 	struct itimerval timer;
 
 	// Set up what the timer should reset to after the timer goes off
-	timer.it_interval.tv_usec = 0; 
-	timer.it_interval.tv_sec = TIME_QUANTUM;
+	timer.it_interval.tv_usec = TIME_QUANTUM; 
+	timer.it_interval.tv_sec = 0;
 
-	timer.it_value.tv_usec = 0;
-	timer.it_value.tv_sec = TIME_QUANTUM;
+	timer.it_value.tv_usec = TIME_QUANTUM;
+	timer.it_value.tv_sec = 0;
 
 	// Set the timer up (start the timer)
 	setitimer(ITIMER_PROF, &timer, NULL);
@@ -315,14 +315,7 @@ int worker_yield() {
 	// - switch from thread context to scheduler context
 
 	// YOUR CODE HERE
-	ucontext_t* cctx;
-	getcontext(cctx);
-	// Might not work? What happens with the stack pointer?
-	runq_curr->block->status = Ready;
-	free(runq_curr->block->context);
-	runq_curr->block->context = cctx;
-
-	swapcontext(cctx, &scheduler_ctx);
+	swapcontext(runq_curr->block->context, &scheduler_ctx);
 	return 0;
 };
 
