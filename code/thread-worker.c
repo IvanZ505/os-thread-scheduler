@@ -11,6 +11,7 @@
 #include <unistd.h>
 #include <ucontext.h>
 #include <string.h>
+#include <stdatomic.h>
 #include <valgrind/valgrind.h>
 
 
@@ -38,6 +39,7 @@ int scheduler_initialized = 0;
 
 // scheduler
 static void schedule();
+void printList(Node* last);
 
 // @TODO: need to add freeing for the TCB blocks and the stacks inside.
 // ---Circular Linked List---
@@ -59,23 +61,25 @@ int queue(Node** last, Node* tcb_node) {
 }
 
 // Removes requested node 
-int dequeue(Node** last, Node* tcb_node) {
-    if (last == NULL) {
+int dequeue(Node** last, Node* tcb_node, int freeing) {
+    if (*last == NULL) {
         // List is empty, nothing to dequeue
         return -1; // Indicate failure
     }
 
+	printf("Dequeueing %d\n", tcb_node->block->thread_id);
+	printList(*last);
     Node *current = (*last)->next, *prev = NULL;
 
     // Case 1: If the node to be removed is the only node in the list
     if (current == tcb_node && current->next == current) {
 		// Free TCB block
-		if (current->block->stack != NULL) {
+		if (freeing == 1 && current->block->stack != NULL) {
 			free(current->block->stack);
 			free(current->block->context);
 			free(current->block);
 		}
-		free(current);
+		if(freeing == 1) free(current);
         *last = NULL; // List is now empty
         return 0;     // Indicate success
     }
@@ -88,12 +92,15 @@ int dequeue(Node** last, Node* tcb_node) {
 
 	if (current == tcb_node) {
 		prev->next = current->next;
-		if (current->block->stack != NULL) {
+		if (freeing == 1 && current->block->stack != NULL) {
 			free(current->block->stack);
 			free(current->block->context);
 			free(current->block);
 		}
-		free(current);
+		if(current == *last) {
+			*last = prev;
+		}
+		if(freeing == 1) free(current);
 		return 0; // Indicate success
 	}
 
@@ -253,6 +260,7 @@ int worker_create(worker_t* thread, pthread_attr_t * attr,
 	tcb *block = (tcb *)malloc(sizeof(tcb));
 	ucontext_t *cctx = malloc(sizeof(ucontext_t));
 	block->stack = malloc(STACK_SIZE);
+	// REMEMBER TO REMOVE THIS LATER
 	VALGRIND_STACK_REGISTER(block->stack, block->stack + STACK_SIZE);
 	if (block->stack == NULL) {
     	perror("Failed to allocate stack");
@@ -383,7 +391,7 @@ int worker_join(worker_t thread, void **value_ptr) {
 	// free(curr->block);
 
 	// Remove from the run queue
-	dequeue(&runq_last, curr);
+	dequeue(&runq_last, curr, 1);
 	return 0;
 };
 
@@ -394,6 +402,13 @@ int worker_mutex_init(worker_mutex_t *mutex,
 
 	// YOUR CODE HERE
 
+	if (!mutex) return -1;
+
+	mutex->locked = 0;          // Initially unlocked
+	mutex->owner = NULL;        // No thread owns it yet
+	*(mutex->queue) = NULL;        // No threads waiting yet
+	mutex->initialized = 1;     // Set as initialized
+	
 	return 0;
 };
 
@@ -406,6 +421,22 @@ int worker_mutex_lock(worker_mutex_t *mutex) {
         // context switch to the scheduler thread
 
         // YOUR CODE HERE
+		if (!mutex || !mutex->initialized) return -1;
+
+		worker_t thread_id = runq_curr->block->thread_id;
+
+		while (atomic_exchange(&(mutex->locked), 1) == 1) {
+			if (mutex->owner == thread_id) {
+           		return -1;  // Deadlock
+        	}
+			runq_curr->block->status = Blocked;
+			dequeue(&runq_last, runq_curr, 0);  // Remove the thread from the run queue, but do not deallocate the resources
+        	queue(&(mutex->queue), runq_curr);  // Add the thread to the waiting queue
+			swapcontext(runq_curr->block->context, &scheduler_context);  // Switch to scheduler
+		}
+
+		 // Successfully acquired lcok
+    	mutex->owner = current_thread;
         return 0;
 };
 
@@ -416,7 +447,26 @@ int worker_mutex_unlock(worker_mutex_t *mutex) {
 	// so that they could compete for mutex later.
 
 	// YOUR CODE HERE
-	return 0;
+	// Check if mutex is initialized
+    if (!mutex || !mutex->initialized) return -1;
+
+    // Only the owner can unlock
+    if (mutex->owner != runq_curr->block->thread_id) return -1;
+
+    // Release the lock
+    mutex->locked = 0;
+    mutex->owner = NULL;
+
+    // If threads are waiting, move them back to the run queue
+    Node* waiting_thread = *(mutex->queue);
+    if (waiting_thread != NULL) {
+        // Dequeue the first thread from the mutex queue, do not deallocate
+        dequeue(mutex->queue, waiting_thread, 0);
+        // Add it back to the run queue
+        queue(&runq_last, waiting_thread);
+    }
+
+    return 0;  // Success
 };
 
 

@@ -21,6 +21,7 @@
 #include <stdlib.h>
 #include <ucontext.h>
 #include <signal.h>
+#include <stdatomic.h>
 
 typedef uint worker_t;
 
@@ -52,8 +53,12 @@ typedef struct TCB {
 /* mutex struct definition */
 typedef struct worker_mutex_t {
 	/* add something here */
-	
+
 	// YOUR CODE HERE
+	atomic_int locked;             // 0 for unlocked, 1 for locked
+    worker_t owner;         // The thread (or thread ID) that holds the mutex
+	Node** queue;            // Do we need a queue?
+    int initialized;       
 } worker_mutex_t;
 
 /* Priority definitions */
