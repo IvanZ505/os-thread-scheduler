@@ -17,7 +17,7 @@ int k = 3;
 
 void foo(){
 	while (1) {
-		// printf("foo\n");
+		printf("foo\n");
 	}
 }
 
@@ -27,17 +27,13 @@ void bar(){
 	}
 }
 
-void benchmark(){
-	int fooThread = worker_create(&j, NULL, &foo, NULL);
-	printf("aaa");
-	int barThread = worker_create(&k, NULL, &bar, NULL);
-
-}
-
-
 int main(int argc, char **argv) {
 
-	int currThread = main_worker_create(&i, NULL, benchmark, NULL);
+	int fooThread = worker_create(&i, NULL, &foo, NULL);
+	int barThread = worker_create(&j, NULL, &bar, NULL);
 
+	while(1) {
+		printf("main\n");
+	}
 	return 0;
 }

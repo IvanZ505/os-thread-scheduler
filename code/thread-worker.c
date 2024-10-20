@@ -41,7 +41,7 @@ static void schedule();
 // @TODO: need to add freeing for the TCB blocks and the stacks inside.
 // ---Circular Linked List---
 
-// Inserts node to the front of linked list
+// Inserts node to the rear of linked list
 int queue(Node** last, Node* tcb_node) {
 	if ((*last) == NULL) {
 		*last = tcb_node;
@@ -51,12 +51,13 @@ int queue(Node** last, Node* tcb_node) {
 
 	tcb_node->next = (*last)->next;
 	(*last)->next = tcb_node;
+	(*last) = (*last)->next;
 
 	// (*last) = (*last)->next;
 	return 0;
 }
 
-
+// Removes requested node 
 int dequeue(Node** last, Node* tcb_node) {
     if (last == NULL) {
         // List is empty, nothing to dequeue
@@ -83,8 +84,11 @@ int dequeue(Node** last, Node* tcb_node) {
 
 	if (current == tcb_node) {
 		prev->next = current->next;
-		free(current->block->stack);
-		free(current->block);
+		if (current->block->stack) {
+			free(current->block->stack);
+			free(current->block->context);
+			free(current->block);
+		}
 		free(current);
 		return 0; // Indicate success
 	}
@@ -120,13 +124,20 @@ int freeList(Node** last) {
 
 	Node *current = (*last)->next;
 	while (current != (*last)) {
-		free(current->block->stack);
-		free(current->block);
+		if (current->block->stack) {
+			free(current->block->stack);
+			free(current->block->context);
+			free(current->block);
+		}
 		free(current);
 		current = current->next;
 	}
-	free((*last)->block->stack);
-	free((*last)->block);
+
+	if ((*last)->block->stack) {
+		free((*last)->block->stack);
+		free((*last)->block->context);
+		free((*last)->block);
+	}
 	free(*last);
 	(*last) = NULL; // List is now empty
 	return 0;     // Indicate success
@@ -134,18 +145,13 @@ int freeList(Node** last) {
 
 /* Handles swapping contexts when a time quantum elapses */
 void context_switch(int signum) {
-	printf("ALARM\n");
-	printf("ALARM\n");
-	printf("ALARM\n");
-	printf("ALARM\n");
-	printf("ALARM\n");
 	swapcontext(runq_curr->block->context, &scheduler_ctx);
 }
 
 /* Initializes the library and timer */
 void thread_init() {
-	// Initialize the scheduler context
 
+	// Initialize the scheduler context
 	if (getcontext(&scheduler_ctx) < 0){
 		perror("getcontext");
 		exit(1);
@@ -157,6 +163,30 @@ void thread_init() {
 	scheduler_ctx.uc_stack.ss_flags = 0;
 	makecontext(&scheduler_ctx, (void *)&schedule, 0);
 
+	/* Initialize the caller context
+	This assumes the caller of the first call to create_worker will be the only
+	thread to call create_worker. If a create_worker thread tried to call create_worker,
+	it would work in theory but the caller thread's state will not be able to be saved (I think, this shit is hard)
+	*/
+	if (getcontext(&main_ctx) < 0){
+		perror("Getcontext failed");
+		exit(1);
+	}
+
+	tcb *block = (tcb *)malloc(sizeof(tcb));
+
+	block->context = &main_ctx;
+	block->stack = NULL;
+	block->status = Ready;
+	block->priority = 4;
+	block->thread_id = 0;
+	block->function = NULL;
+
+	Node* tcb_block = (Node *)malloc(sizeof(Node));
+	tcb_block->block = block;
+	queue(&runq_last, tcb_block);
+
+	runq_curr = tcb_block;
 	// Initialize timer
 
 	// Copied from given sample, should change a little
@@ -183,7 +213,7 @@ void thread_init() {
 }
 
 void worker_wrapper(void * arg){
-	printf("did we get this far?: %d\n", runq_curr->block->thread_id);
+	printf("start of worker wrapper: id %d\n", runq_curr->block->thread_id);
 	if (runq_curr) {
 		void* r = runq_curr->block->function(arg);
 	}
@@ -201,51 +231,47 @@ void worker_wrapper(void * arg){
 /* create a new thread */
 int worker_create(worker_t* thread, pthread_attr_t * attr, 
                       void *(*function)(void*), void * arg) {
-
        // - create Thread Control Block (TCB)
        // - create and initialize the context of this worker thread
        // - allocate space of stack for this thread to run
        // after everything is set, push this thread into run queue and 
        // - make it ready for the execution.
 
-       // YOUR CODE HERE
+       // YOUR CODE HERE	
+	if(scheduler_initialized == 0) {
+		thread_init();
+	}
 	
 	tcb *block = (tcb *)malloc(sizeof(tcb));
-	ucontext_t cctx;
+	ucontext_t *cctx = malloc(sizeof(ucontext_t));
 	block->stack = malloc(STACK_SIZE);
 	if (block->stack == NULL) {
     	perror("Failed to allocate stack");
     	return -1;
 	}
 
-	if (getcontext(&cctx) < 0){
+	if (getcontext(cctx) < 0){
 		perror("getcontext");
 		exit(1);
 	}
 
-	cctx.uc_stack.ss_sp = block->stack;
-	cctx.uc_link=&scheduler_ctx;
-	cctx.uc_stack.ss_size=STACK_SIZE;
-	cctx.uc_stack.ss_flags=0;
-	block->context = &cctx;
+	cctx->uc_stack.ss_sp = block->stack;
+	cctx->uc_link=&scheduler_ctx;
+	cctx->uc_stack.ss_size=STACK_SIZE;
+	cctx->uc_stack.ss_flags=0;
+	block->context = cctx;
 
 	block->status = Ready;
 	block->priority = 4;
 	block->thread_id = *thread;
 	block->function = function;
 
-	makecontext(&cctx, (void *)&worker_wrapper, 1, arg);
+	makecontext(cctx, (void *)&worker_wrapper, 1, arg);
 
 	Node* tcb_block = (Node *)malloc(sizeof(Node));
 	tcb_block->block = block;
 	queue(&runq_last, tcb_block);
 
-	runq_curr = tcb_block;
-
-	if (swapcontext(&main_ctx,runq_curr->block->context) < 0){
-		perror("set current context");
-		exit(1);
-	}
 	// Used to test out LL, remember to delete or move else where
 	// printList(runq_last);
 
@@ -257,55 +283,7 @@ int worker_create(worker_t* thread, pthread_attr_t * attr,
 	// 	freeList(&runq_last);
 	// }
     // return 0;
-};
-
-/* Not sure how to handle the base case, in the sense that when we call
-worker_create from else where, we do not have a way to grab that parent thread to
-then return or context switch from. This is a kind of jank solution which is marking a specific thread
-as the parent/main tread and assuming callers to worker_create are children of this thread */
-int main_worker_create(worker_t* thread, pthread_attr_t * attr, 
-                      void *(*function)(void*), void * arg) {
-	// Initialize the main context
-
-	if(scheduler_initialized == 0) {
-		thread_init();
-	}
-
-	if (getcontext(&main_ctx) < 0){
-		perror("Getcontext failed");
-		exit(1);
-	}
-
-	tcb *block = (tcb *)malloc(sizeof(tcb));
-	block->stack = malloc(STACK_SIZE);
-	if (block->stack == NULL) {
-    	perror("Failed to allocate stack");
-    	return -1;
-	}
-
-	main_ctx.uc_link = NULL;
-	main_ctx.uc_stack.ss_sp = malloc(STACK_SIZE);
-	main_ctx.uc_stack.ss_size = STACK_SIZE;
-	main_ctx.uc_stack.ss_flags = 0;
-	block->context = &main_ctx;
-
-	block->status = Ready;
-	block->priority = 4;
-	block->thread_id = *thread;
-	block->function = function;
-
-	makecontext(&main_ctx,(void *)&function, 0);
-
-	Node* tcb_block = (Node *)malloc(sizeof(Node));
-	tcb_block->block = block;
-	queue(&runq_last, tcb_block);
-
-	runq_curr = tcb_block;
-
-	if (setcontext(&main_ctx) < 0){
-		perror("set current context");
-		exit(1);
-	}
+	return *thread;
 };
 
 #ifdef MLFQ
@@ -420,20 +398,18 @@ static void schedule() {
 
 	// YOUR CODE HERE
 
-	//temporary round robin scheduler
-	runq_curr = runq_curr->next;
-	printf("running: %d\n",(runq_curr->block->thread_id));
-	setcontext(runq_curr->block->context);
-	// swapcontext(&scheduler_ctx,runq_curr->block->context);
-
-
+	// Temporary round robin scheduler
+	while (1) {
+		runq_curr = runq_curr->next;
+		printList(runq_last);
+		swapcontext(&scheduler_ctx, runq_curr->block->context);
 // - schedule policy
 #ifndef MLFQ
 	// Choose PSJF
 #else 
 	// Choose MLFQ
 #endif
-
+	}
 }
 
 /* Pre-emptive Shortest Job First (POLICY_PSJF) scheduling algorithm */
