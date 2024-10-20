@@ -11,11 +11,12 @@
 #include <unistd.h>
 #include <ucontext.h>
 #include <string.h>
+#include <valgrind/valgrind.h>
 
 
 #include "thread-worker.h"
 
-#define TIME_QUANTUM 100
+#define TIME_QUANTUM 1000
 
 //Global counter for total context switches and 
 //average turn around and response time
@@ -69,8 +70,11 @@ int dequeue(Node** last, Node* tcb_node) {
     // Case 1: If the node to be removed is the only node in the list
     if (current == tcb_node && current->next == current) {
 		// Free TCB block
-		free(current->block->stack);
-		free(current->block);
+		if (current->block->stack != NULL) {
+			free(current->block->stack);
+			free(current->block->context);
+			free(current->block);
+		}
 		free(current);
         *last = NULL; // List is now empty
         return 0;     // Indicate success
@@ -84,7 +88,7 @@ int dequeue(Node** last, Node* tcb_node) {
 
 	if (current == tcb_node) {
 		prev->next = current->next;
-		if (current->block->stack) {
+		if (current->block->stack != NULL) {
 			free(current->block->stack);
 			free(current->block->context);
 			free(current->block);
@@ -124,7 +128,7 @@ int freeList(Node** last) {
 
 	Node *current = (*last)->next;
 	while (current != (*last)) {
-		if (current->block->stack) {
+		if (current->block->stack != NULL) {
 			free(current->block->stack);
 			free(current->block->context);
 			free(current->block);
@@ -158,19 +162,21 @@ void thread_init() {
 		perror("getcontext");
 		exit(1);
 	}
-
 	scheduler_ctx.uc_link = NULL;
 	scheduler_ctx.uc_stack.ss_sp = malloc(STACK_SIZE);
 	scheduler_ctx.uc_stack.ss_size = STACK_SIZE;
 	scheduler_ctx.uc_stack.ss_flags = 0;
 	makecontext(&scheduler_ctx, (void *)&schedule, 0);
 
+	VALGRIND_STACK_REGISTER(scheduler_ctx.uc_stack.ss_sp, scheduler_ctx.uc_stack.ss_sp + STACK_SIZE);
+
+
 	/* Initialize the caller context
 	This assumes the caller of the first call to create_worker will be the only
 	thread to call create_worker. If a create_worker thread tried to call create_worker,
 	it would work in theory but the caller thread's state will not be able to be saved (I think, this shit is hard)
 	*/
-	if (getcontext(&main_ctx) < 0){
+	if (getcontext(&main_ctx) == -1){
 		perror("Getcontext failed");
 		exit(1);
 	}
@@ -216,7 +222,7 @@ void thread_init() {
 
 void worker_wrapper(void * arg){
 	printf("start of worker wrapper: id %d\n", runq_curr->block->thread_id);
-	if (runq_curr && runq_curr->block->status != Terminated) {
+	if (runq_curr && (runq_curr->block->status != Terminated)) {
 		void* r = runq_curr->block->function(arg);
 	}
 
@@ -247,18 +253,23 @@ int worker_create(worker_t* thread, pthread_attr_t * attr,
 	tcb *block = (tcb *)malloc(sizeof(tcb));
 	ucontext_t *cctx = malloc(sizeof(ucontext_t));
 	block->stack = malloc(STACK_SIZE);
+	VALGRIND_STACK_REGISTER(block->stack, block->stack + STACK_SIZE);
 	if (block->stack == NULL) {
     	perror("Failed to allocate stack");
     	return -1;
 	}
 
-	if (getcontext(cctx) < 0){
-		perror("getcontext");
+	if(cctx == NULL){
+    	perror("Failed to allocate context");
+	}
+
+	if (getcontext(cctx) == -1){
+		perror("error fetching context");
 		exit(1);
 	}
 
 	cctx->uc_stack.ss_sp = block->stack;
-	cctx->uc_link=&scheduler_ctx;
+	cctx->uc_link=NULL;
 	cctx->uc_stack.ss_size=STACK_SIZE;
 	cctx->uc_stack.ss_flags=0;
 	block->context = cctx;
@@ -352,6 +363,8 @@ int worker_join(worker_t thread, void **value_ptr) {
 	}
 
 	if (curr->block->thread_id != thread) {
+		// printList(runq_last);
+		// printf("thread %d not found\n", thread);
 		return -1; // Thread not found
 	}
 	
@@ -432,8 +445,8 @@ static void schedule() {
 	// Temporary round robin scheduler
 	while (1) {
 		runq_curr = runq_curr->next;
-		printf("Switched to thread: %d with status %d\n", runq_curr->block->thread_id, runq_curr->block->status);
-		if(!runq_curr->block->status == Terminated) {
+		// printf("Switched to thread: %d with status %d\n", runq_curr->block->thread_id, runq_curr->block->status);
+		if(!(runq_curr->block->status == Terminated)) {
 			runq_curr->block->status = Running;
 			// printList(runq_last);
 			swapcontext(&scheduler_ctx, runq_curr->block->context);

@@ -16,19 +16,26 @@ int j = 2;
 int k = 3;
 int val = 0;
 
-// Simple two thread test
+//Simple two thread test
 // void foo(){
 // 	while (1) {
 // 		printf("foo\n");
 // 	}
 // }
 
+// void bar(){
+// 	while (1) {
+// 		printf("bar\n");
+// 	}
+// }
+
+
 void bar(){
 	int l = 0;
-	while (l < 10000) {
+	while (l < 100) {
 		printf("%d ", l++);
 	}
-	printf("\n");
+	printf("aaaa\n");
 	worker_exit(&val);
 }
 
@@ -46,7 +53,9 @@ int main(int argc, char **argv) {
 	int fooThread = worker_create(&i, NULL, &foo, NULL);
 	int barThread = worker_create(&j, NULL, &bar, NULL);
 
-	worker_join(i, NULL);
+	if (worker_join(i, NULL) == -1) {
+		printf("worker join error\n");
+	}
 
 	return 0;
 }
