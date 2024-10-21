@@ -11,9 +11,9 @@
  * This will not be graded.
  */
 
-int i = 1;
-int j = 2;
-int k = 3;
+// int i = 1;
+// int j = 2;
+// int k = 3;
 int val = 0;
 
 //Simple two thread test
@@ -61,30 +61,39 @@ int val = 0;
 // }
 
 pthread_t t1, t2;
+worker_mutex_t* i;
 
 void* print_periodically(void* arg) {
+    worker_mutex_lock(&i);
+
     for (int i = 0; i < 6; i++) {
         sleep(1);
         printf("Printing some text, time = %d\n", i+1);
     }
     int* result = (int*) malloc(sizeof(int));
     *result = 12;
+    worker_mutex_unlock(&i);
     printf("exiting thread 2\n");
     pthread_exit(result);
 }
 
 void* print_periodically_again(void* arg) {
+    worker_mutex_lock(&i);
     for (int i = 0; i < 3; i++) {
         sleep(2);
         printf("Printing some more text, time = %d\n", 2*(i+1));
     }
+    worker_mutex_unlock(&i);
     printf("exiting thread 3\n");
     pthread_exit(NULL);
 }
 
 int main(int argc, char **argv) {
+    worker_mutex_init(&i, NULL);
+
     pthread_create(&t1, NULL, &print_periodically, NULL);
     pthread_create(&t2, NULL, &print_periodically_again, NULL);
+
     printf("Our two threads are %d and %d\n", t1, t2);
 
     void* status;

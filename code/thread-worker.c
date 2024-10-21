@@ -42,7 +42,7 @@ int tid_counter = 1;
 int mutex_counter = 0;
 
 struct sigaction sa;
-struct itimerval timer;
+struct itimerval timer;	
 
 // Void ** value_ptr
 void **saved_value_ptr;
@@ -162,6 +162,38 @@ int freeList(Node** last) {
 	free(*last);
 	(*last) = NULL; // List is now empty
 	return 0;     // Indicate success
+}
+
+/*
+Pause and resume timers for the critical sections so that the program is not contexted switched whilst working
+*/
+int pause_timer() {
+	struct itimerval current_timer;
+	// Get the current timer value
+	if (getitimer(ITIMER_REAL, &current_timer) == -1) {
+        return -1;
+    }
+
+	timer = current_timer;
+
+	struct itimerval zero_timer = { 0 };
+    if(setitimer(ITIMER_REAL, &zero_timer, &timer) == -1) return -1;
+
+	printf("Timer paused with time: %ld\n", timer.it_value.tv_usec);
+	return 0;
+}
+
+int resume_timer() {
+    if (timer.it_value.tv_sec == 0 && timer.it_value.tv_usec == 0) {
+		return -1;
+	}
+
+	if (setitimer(ITIMER_REAL, &timer, NULL) == -1) {
+        return -1;
+    }
+
+	printf("Timer resumed with time: %ld\n", timer.it_value.tv_usec);
+	return 0;
 }
 
 /* Handles swapping contexts when a time quantum elapses */
@@ -333,9 +365,9 @@ int worker_setschedprio(worker_t thread, int prio) {
 	}
 	if(ptr->block->thread_id == thread) {
 		ptr->block->priority = prio;
-		return 0;	// Successfully set
+		return 0;
 	}
-	return -1;	// Failed to set
+	return -1;
 }
 #endif
 
@@ -421,14 +453,20 @@ int worker_mutex_init(worker_mutex_t *mutex,
 	//- initialize data structures for this mutex
 
 	// YOUR CODE HERE
+	if (scheduler_initialized != 1){
+		thread_init();
+	}
 
 	if (!mutex) return -1;
 
+	pause_timer();
 	atomic_store(&(mutex->locked), 0);
 	mutex->owner = 0;
+	mutex->queue = malloc(sizeof(Node *));
 	*(mutex->queue) = NULL;
 	mutex->id = ++mutex_counter;
-	
+	printf("Mutex %d initialized\n", mutex->id);
+	resume_timer();
 	return 0;
 };
 
@@ -441,22 +479,34 @@ int worker_mutex_lock(worker_mutex_t *mutex) {
         // context switch to the scheduler thread
 
         // YOUR CODE HERE
-		if (!mutex || !mutex->id == 0) return -1;
+		printf("Inside mutex lock with lock: %d\n", mutex->id);
+		if (!mutex || mutex->id == 0) return -1;
 
 		worker_t thread_id = runq_curr->block->thread_id;
 
+		pause_timer();
 		while (atomic_exchange(&(mutex->locked), 1) == 1) {
 			if (mutex->owner == thread_id) {
+				resume_timer();
            		return -1;  // Deadlock
         	}
 			runq_curr->block->status = Blocked;
-			dequeue(&runq_last, runq_curr, 0);  // Remove the thread from the run queue, but do not deallocate the resources
-        	queue(mutex->queue, runq_curr);
+
+			// Copy the runq_curr to the mutex queue
+			Node* new_node = (Node *)malloc(sizeof(Node));
+			new_node->block = runq_curr->block;
+			// dequeue(&runq_last, runq_curr, 0);  // Remove the thread from the run queue, but do not deallocate the resources
+        	queue(mutex->queue, new_node);
+
+			printf("Thread %d is blocked by mutex %d\n", thread_id, mutex->id);
+			resume_timer();
 			swapcontext(runq_curr->block->context, &scheduler_ctx);
 		}
 
 		 // Successfully acquired lcok
+		printf("Thread %d acquired mutex %d\n", thread_id, mutex->id);
     	mutex->owner = thread_id;
+		resume_timer();
         return 0;
 };
 
@@ -468,32 +518,54 @@ int worker_mutex_unlock(worker_mutex_t *mutex) {
 
 	// YOUR CODE HERE
 	// Check if mutex is initialized
-    if (!mutex || !mutex->id == 0) return -1;
+    if (!mutex || mutex->id == 0) return -1;
 
     // Only the owner can unlock
     if (mutex->owner != runq_curr->block->thread_id) return -1;
 
-
+	pause_timer();
     // Release the lock
-    mutex->locked = 0;
-    mutex->owner = UINT_MAX;
+	printf("Thread %d released mutex %d\n", runq_curr->block->thread_id, mutex->id);
 
+	atomic_store(&(mutex->locked), 0);
+    mutex->owner = 0;
+
+	// Check if there are any threads waiting in the mutex's queue
+    if (mutex->queue == NULL || *(mutex->queue) == NULL) {
+        resume_timer();
+        return 0;  // No threads waiting, nothing to do
+    }
     // If threads are waiting, move them back to the run queue
     Node* waiting_thread = *(mutex->queue);
+	
+	waiting_thread = waiting_thread->next;
+	worker_t thread = waiting_thread->block->thread_id;
+	printf("next thread: %d, %d\n", waiting_thread->block->thread_id, thread);
     if (waiting_thread != NULL) {
         // Dequeue the first thread from the mutex queue, do not deallocate
         dequeue(mutex->queue, waiting_thread, 0);
-        // Add it back to the run queue
-        queue(&runq_last, waiting_thread);
+		free(waiting_thread);
+        // Change runq status to Ready
+		Node* ptr = runq_last->next;
+		while(ptr != runq_last && ptr->block->thread_id != thread) {
+			ptr = ptr->next;
+		}
+		if(ptr->block->thread_id == thread) {
+			printf("Thread %d is ready\n", thread);
+			ptr->block->status = Ready;
+			resume_timer();
+			return 0;	// Successfully set
+		}
     }
-
-    return 0;  // Success
-};
+	resume_timer();
+	return -1;
+}
 
 
 /* destroy the mutex */
 int worker_mutex_destroy(worker_mutex_t *mutex) {
 	// - de-allocate dynamic memory created in worker_mutex_init
+	free(mutex->queue);
 	freeList(mutex->queue);
 	mutex->id = 0;
 
@@ -517,9 +589,10 @@ static void schedule() {
 
 	// Temporary round robin scheduler
 	while (1) {
+		// printList(runq_last);
 		runq_curr = runq_curr->next;
 		// printf("Switched to thread: %d with status %d\n", runq_curr->block->thread_id, runq_curr->block->status);
-		if(!(runq_curr->block->status == Terminated)) {
+		if(!(runq_curr->block->status == Terminated) && !(runq_curr->block->status == Blocked)) {
 			runq_curr->block->status = Running;
 			// printList(runq_last);
 			swapcontext(&scheduler_ctx, runq_curr->block->context);
