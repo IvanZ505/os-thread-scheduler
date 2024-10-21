@@ -85,9 +85,9 @@ typedef struct worker_mutex_t {
 
 	// YOUR CODE HERE
 	atomic_int locked;             // 0 for unlocked, 1 for locked
-    worker_t owner;         // The thread (or thread ID) that holds the mutex
+    worker_t owner;
 	Node** queue;            // Do we need a queue?
-    int initialized;       
+    unsigned int id;       
 } worker_mutex_t;
 
 /* create a new thread */

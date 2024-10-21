@@ -18,7 +18,7 @@
 
 #include "thread-worker.h"
 
-#define TIME_QUANTUM 1000
+#define TIME_QUANTUM 10000
 
 //Global counter for total context switches and 
 //average turn around and response time
@@ -34,9 +34,18 @@ double avg_resp_time=0;
 Node* runq_last;
 Node* runq_curr;
 
+// Saved scheduler contexts
 ucontext_t scheduler_ctx, main_ctx;
 
 int scheduler_initialized = 0;
+int tid_counter = 1;
+int mutex_counter = 0;
+
+struct sigaction sa;
+struct itimerval timer;
+
+// Void ** value_ptr
+void **saved_value_ptr;
 
 // scheduler
 static void schedule();
@@ -159,6 +168,7 @@ int freeList(Node** last) {
 void context_switch(int signum) {
 	// Do we need to add this
 	// getcontext(runq_curr->block->context);
+	// printf("Timer interrupt switch...\n");
 	swapcontext(runq_curr->block->context, &scheduler_ctx);
 }
 
@@ -195,7 +205,7 @@ void thread_init() {
 	block->stack = NULL;
 	block->status = Ready;
 	block->priority = 4;
-	block->thread_id = 0;
+	block->thread_id = 1;
 	block->function = NULL;
 
 	Node* tcb_block = (Node *)malloc(sizeof(Node));
@@ -208,22 +218,20 @@ void thread_init() {
 	// Copied from given sample, should change a little
 
 	// Use sigaction to register signal handler
-	struct sigaction sa;
 	memset(&sa, 0, sizeof(sa));
 	sa.sa_handler = &context_switch;
-	sigaction (SIGPROF, &sa, NULL);
+	sigaction(SIGALRM, &sa, NULL);
 	// Create timer struct
-	struct itimerval timer;
 
 	// Set up what the timer should reset to after the timer goes off
-	timer.it_interval.tv_usec = TIME_QUANTUM; 
-	timer.it_interval.tv_sec = 0;
+	timer.it_interval.tv_usec = 0; 
+	timer.it_interval.tv_sec = 1;
 
 	timer.it_value.tv_usec = TIME_QUANTUM;
 	timer.it_value.tv_sec = 0;
 
 	// Set the timer up (start the timer)
-	setitimer(ITIMER_PROF, &timer, NULL);
+	setitimer(ITIMER_REAL, &timer, NULL);
 
 	scheduler_initialized = 1;
 }
@@ -258,6 +266,7 @@ int worker_create(worker_t* thread, pthread_attr_t * attr,
 		thread_init();
 	}
 	
+	tid_counter++;
 	tcb *block = (tcb *)malloc(sizeof(tcb));
 	ucontext_t *cctx = malloc(sizeof(ucontext_t));
 	block->stack = malloc(STACK_SIZE);
@@ -277,12 +286,15 @@ int worker_create(worker_t* thread, pthread_attr_t * attr,
 		exit(1);
 	}
 
+	// Set up the context
 	cctx->uc_stack.ss_sp = block->stack;
 	cctx->uc_link=NULL;
 	cctx->uc_stack.ss_size=STACK_SIZE;
 	cctx->uc_stack.ss_flags=0;
 	block->context = cctx;
 
+	// Set up the TCB
+	*thread = tid_counter;
 	block->status = Ready;
 	block->priority = 4;
 	block->thread_id = *thread;
@@ -352,7 +364,7 @@ void worker_exit(void *value_ptr) {
 	
 	// set value pointer... TF is this??? do i just set it to 1?
 	if(value_ptr != NULL) {
-		*(int*)value_ptr = 1;
+		saved_value_ptr = &value_ptr;
 	}
 
 	swapcontext(runq_curr->block->context, &scheduler_ctx);
@@ -383,7 +395,7 @@ int worker_join(worker_t thread, void **value_ptr) {
 
 	// Wait until the thread terminates
 	while (curr->block->status != Terminated) {
-		printf("Waiting for: %d\n", curr->block->thread_id);
+		// printf("Waiting for: %d\n", curr->block->thread_id);
 		runq_curr->block->status = Ready;
 		worker_yield(); // Yield CPU while waiting
 	}
@@ -392,6 +404,11 @@ int worker_join(worker_t thread, void **value_ptr) {
 	// free(curr->block->stack);
 	// free(curr->block->context);
 	// free(curr->block);
+
+	// Set the value pointer
+	if (value_ptr != NULL) {
+		*value_ptr = *saved_value_ptr;
+	}
 
 	// Remove from the run queue
 	dequeue(&runq_last, curr, 1);
@@ -407,10 +424,10 @@ int worker_mutex_init(worker_mutex_t *mutex,
 
 	if (!mutex) return -1;
 
-	mutex->locked = 0;
-	mutex->owner = UINT_MAX;
+	atomic_store(&(mutex->locked), 0);
+	mutex->owner = 0;
 	*(mutex->queue) = NULL;
-	mutex->initialized = 1;
+	mutex->id = ++mutex_counter;
 	
 	return 0;
 };
@@ -424,7 +441,7 @@ int worker_mutex_lock(worker_mutex_t *mutex) {
         // context switch to the scheduler thread
 
         // YOUR CODE HERE
-		if (!mutex || !mutex->initialized) return -1;
+		if (!mutex || !mutex->id == 0) return -1;
 
 		worker_t thread_id = runq_curr->block->thread_id;
 
@@ -451,10 +468,11 @@ int worker_mutex_unlock(worker_mutex_t *mutex) {
 
 	// YOUR CODE HERE
 	// Check if mutex is initialized
-    if (!mutex || !mutex->initialized) return -1;
+    if (!mutex || !mutex->id == 0) return -1;
 
     // Only the owner can unlock
     if (mutex->owner != runq_curr->block->thread_id) return -1;
+
 
     // Release the lock
     mutex->locked = 0;
@@ -476,6 +494,8 @@ int worker_mutex_unlock(worker_mutex_t *mutex) {
 /* destroy the mutex */
 int worker_mutex_destroy(worker_mutex_t *mutex) {
 	// - de-allocate dynamic memory created in worker_mutex_init
+	freeList(mutex->queue);
+	mutex->id = 0;
 
 	return 0;
 };
