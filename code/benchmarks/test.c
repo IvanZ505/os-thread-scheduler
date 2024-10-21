@@ -30,32 +30,71 @@ int val = 0;
 // }
 
 
-void bar(){
-	int l = 0;
-	while (l < 100) {
-		printf("%d ", l++);
-	}
-	printf("aaaa\n");
-	worker_exit(&val);
+// void bar(){
+// 	int l = 0;
+// 	while (l < 100) {
+// 		printf("%d ", l++);
+// 	}
+// 	printf("aaaa\n");
+// 	worker_exit(&val);
+// }
+
+// // Worker yield test
+// void foo(){
+// 	printf("Waiting for bar to finish\n");
+// 	if(worker_join(j, NULL) == 0) {
+// 		printf("bar finished\n");
+// 	}
+// 	worker_exit(&val);
+// }
+
+
+// int main(int argc, char **argv) {
+// 	int fooThread = worker_create(&i, NULL, &foo, NULL);
+// 	int barThread = worker_create(&j, NULL, &bar, NULL);
+
+// 	if (worker_join(i, NULL) == -1) {
+// 		printf("worker join error\n");
+// 	}
+
+// 	return 0;
+// }
+
+pthread_t t1, t2;
+
+void* print_periodically(void* arg) {
+    for (int i = 0; i < 6; i++) {
+        sleep(1);
+        printf("Printing some text, time = %d\n", i+1);
+    }
+    int* result = (int*) malloc(sizeof(int));
+    *result = 12;
+    printf("exiting thread 2\n");
+    pthread_exit(result);
 }
 
-// Worker yield test
-void foo(){
-	printf("Waiting for bar to finish\n");
-	if(worker_join(j, NULL) == 0) {
-		printf("bar finished\n");
-	}
-	worker_exit(&val);
+void* print_periodically_again(void* arg) {
+    for (int i = 0; i < 3; i++) {
+        sleep(2);
+        printf("Printing some more text, time = %d\n", 2*(i+1));
+    }
+    printf("exiting thread 3\n");
+    pthread_exit(NULL);
 }
-
 
 int main(int argc, char **argv) {
-	int fooThread = worker_create(&i, NULL, &foo, NULL);
-	int barThread = worker_create(&j, NULL, &bar, NULL);
+    pthread_create(&t1, NULL, &print_periodically, NULL);
+    pthread_create(&t2, NULL, &print_periodically_again, NULL);
+    printf("Our two threads are %d and %d\n", t1, t2);
 
-	if (worker_join(i, NULL) == -1) {
-		printf("worker join error\n");
-	}
+    void* status;
+    printf("joining thread %d\n", t1);
+    pthread_join(t1, &status);
+    printf("retval is %d\n", *((int*) status));
+    free(status);
 
-	return 0;
+    printf("joining thread %d\n", t2);
+    pthread_join(t2, NULL);
+
+    return 0;
 }

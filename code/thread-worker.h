@@ -50,16 +50,6 @@ typedef struct TCB {
 	void *(*function)(void*); 
 } tcb; 	
 
-/* mutex struct definition */
-typedef struct worker_mutex_t {
-	/* add something here */
-
-	// YOUR CODE HERE
-	atomic_int locked;             // 0 for unlocked, 1 for locked
-    worker_t owner;         // The thread (or thread ID) that holds the mutex
-	Node** queue;            // Do we need a queue?
-    int initialized;       
-} worker_mutex_t;
 
 /* Priority definitions */
 #define NUMPRIO 4
@@ -81,13 +71,24 @@ typedef struct Node {
 
 int queue(Node** last, Node* tcb_node);
 
-int dequeue(Node** last, Node* tcb_node);
+int dequeue(Node** last, Node* tcb_node, int freeing);
 
 void printList(Node* last);
 
 int freeList(Node** last);
 
 /* Function Declarations: */
+
+/* mutex struct definition */
+typedef struct worker_mutex_t {
+	/* add something here */
+
+	// YOUR CODE HERE
+	atomic_int locked;             // 0 for unlocked, 1 for locked
+    worker_t owner;         // The thread (or thread ID) that holds the mutex
+	Node** queue;            // Do we need a queue?
+    int initialized;       
+} worker_mutex_t;
 
 /* create a new thread */
 int worker_create(worker_t * thread, pthread_attr_t * attr, void

@@ -11,6 +11,7 @@
 #include <unistd.h>
 #include <ucontext.h>
 #include <string.h>
+#include <limits.h>
 #include <stdatomic.h>
 #include <valgrind/valgrind.h>
 
@@ -350,7 +351,9 @@ void worker_exit(void *value_ptr) {
 	runq_curr->block->status = Terminated;
 	
 	// set value pointer... TF is this??? do i just set it to 1?
-	*(int *)value_ptr = 1;
+	if(value_ptr != NULL) {
+		*(int*)value_ptr = 1;
+	}
 
 	swapcontext(runq_curr->block->context, &scheduler_ctx);
 };
@@ -404,10 +407,10 @@ int worker_mutex_init(worker_mutex_t *mutex,
 
 	if (!mutex) return -1;
 
-	mutex->locked = 0;          // Initially unlocked
-	mutex->owner = NULL;        // No thread owns it yet
-	*(mutex->queue) = NULL;        // No threads waiting yet
-	mutex->initialized = 1;     // Set as initialized
+	mutex->locked = 0;
+	mutex->owner = UINT_MAX;
+	*(mutex->queue) = NULL;
+	mutex->initialized = 1;
 	
 	return 0;
 };
@@ -431,12 +434,12 @@ int worker_mutex_lock(worker_mutex_t *mutex) {
         	}
 			runq_curr->block->status = Blocked;
 			dequeue(&runq_last, runq_curr, 0);  // Remove the thread from the run queue, but do not deallocate the resources
-        	queue(&(mutex->queue), runq_curr);  // Add the thread to the waiting queue
-			swapcontext(runq_curr->block->context, &scheduler_context);  // Switch to scheduler
+        	queue(mutex->queue, runq_curr);
+			swapcontext(runq_curr->block->context, &scheduler_ctx);
 		}
 
 		 // Successfully acquired lcok
-    	mutex->owner = current_thread;
+    	mutex->owner = thread_id;
         return 0;
 };
 
@@ -455,7 +458,7 @@ int worker_mutex_unlock(worker_mutex_t *mutex) {
 
     // Release the lock
     mutex->locked = 0;
-    mutex->owner = NULL;
+    mutex->owner = UINT_MAX;
 
     // If threads are waiting, move them back to the run queue
     Node* waiting_thread = *(mutex->queue);
