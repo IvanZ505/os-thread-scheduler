@@ -565,8 +565,9 @@ int worker_mutex_unlock(worker_mutex_t *mutex) {
 /* destroy the mutex */
 int worker_mutex_destroy(worker_mutex_t *mutex) {
 	// - de-allocate dynamic memory created in worker_mutex_init
+	if(mutex->queue != NULL) freeList(mutex->queue);
 	free(mutex->queue);
-	freeList(mutex->queue);
+
 	mutex->id = 0;
 
 	return 0;
