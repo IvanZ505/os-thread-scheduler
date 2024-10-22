@@ -255,6 +255,7 @@ void thread_init() {
 	block->priority = 4;
 	block->thread_id = 1;
 	block->elapsed = 0;
+	block->ran_first = 1;
 	gettimeofday(&block->start, NULL);
 	block->function = NULL;
 
@@ -428,7 +429,7 @@ void worker_exit(void *value_ptr) {
 	long int et = end.tv_sec * 1000 + end.tv_usec / 1000;
 	long int st = runq_curr->block->start.tv_sec * 1000 + runq_curr->block->start.tv_usec / 1000;
 	long int response_time = et - st;
-	printf("Current response time: %ld\n", response_time);
+	printf("Current turnaround time: %ld\n", response_time);
 	// Calculate my averages
 	avg_turn_time = avg_turn_time + ((response_time - avg_turn_time) / (tid_counter-1));
 
