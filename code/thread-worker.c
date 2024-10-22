@@ -94,6 +94,20 @@ int dequeue(Node** last, Node* tcb_node, int freeing) {
         return 0;     // Indicate success
     }
 
+	// Case 2: There is only 2 nodes in the list
+	if (current->next == *last) {
+		if (current == tcb_node) {
+			(*last)->next = current->next;
+			if (freeing == 1 && current->block->stack != NULL) {
+				free(current->block->stack);
+				free(current->block->context);
+				free(current->block);
+			}
+			if(freeing == 1) free(current);
+			return 0; // Indicate success
+		}
+	}
+
     // Traverse the list to find the node to delete
     while(current != *last && current != tcb_node) {
 		prev = current;
@@ -101,6 +115,8 @@ int dequeue(Node** last, Node* tcb_node, int freeing) {
 	}
 
 	if (current == tcb_node) {
+		// printf("%d\n", prev->block->thread_id);
+		// printf("%d\n", current->block->thread_id);
 		prev->next = current->next;
 		if (freeing == 1 && current->block->stack != NULL) {
 			free(current->block->stack);
@@ -429,7 +445,7 @@ void worker_exit(void *value_ptr) {
 	long int et = end.tv_sec * 1000 + end.tv_usec / 1000;
 	long int st = runq_curr->block->start.tv_sec * 1000 + runq_curr->block->start.tv_usec / 1000;
 	long int response_time = et - st;
-	printf("Current turnaround time: %ld\n", response_time);
+	// printf("Current turnaround time: %ld\n", response_time);
 	// Calculate my averages
 	avg_turn_time = avg_turn_time + ((response_time - avg_turn_time) / (tid_counter-1));
 
@@ -500,7 +516,7 @@ int worker_mutex_init(worker_mutex_t *mutex,
 	mutex->queue = malloc(sizeof(Node *));
 	*(mutex->queue) = NULL;
 	mutex->id = ++mutex_counter;
-	printf("Mutex %d initialized\n", mutex->id);
+	// printf("Mutex %d initialized\n", mutex->id);
 	resume_timer();
 	return 0;
 };
@@ -703,7 +719,7 @@ static void sched_psjf() {
 			long int et = enda.tv_sec * 1000 + enda.tv_usec / 1000;
 			long int st = runq_curr->block->start.tv_sec * 1000 + runq_curr->block->start.tv_usec / 1000;
 			long int response_time = et - st;
-			printf("Current response time is %ld - %ld = %ld\n",et, st, response_time);
+			// printf("Current response time is %ld - %ld = %ld\n",et, st, response_time);
 
 			// Calculate my averages
 			if(tid_counter == 1) {
