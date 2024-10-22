@@ -77,8 +77,8 @@ int dequeue(Node** last, Node* tcb_node, int freeing) {
         return -1; // Indicate failure
     }
 
-	printf("Dequeueing %d\n", tcb_node->block->thread_id);
-	printList(*last);
+	// printf("Dequeueing %d\n", tcb_node->block->thread_id);
+	// printList(*last);
     Node *current = (*last)->next, *prev = NULL;
 
     // Case 1: If the node to be removed is the only node in the list
@@ -179,7 +179,7 @@ int pause_timer() {
 	struct itimerval zero_timer = { 0 };
     if(setitimer(ITIMER_REAL, &zero_timer, &timer) == -1) return -1;
 
-	printf("Timer paused with time: %ld\n", timer.it_value.tv_usec);
+	// printf("Timer paused with time: %ld\n", timer.it_value.tv_usec);
 	return 0;
 }
 
@@ -192,12 +192,12 @@ int resume_timer() {
         return -1;
     }
 
-	printf("Timer resumed with time: %ld\n", timer.it_value.tv_usec);
+	// printf("Timer resumed with time: %ld\n", timer.it_value.tv_usec);
 	return 0;
 }
 
 int reset_timer() {
-	printf("Resetting timer...\n");
+	// printf("Resetting timer...\n");
 
     // Reset the timer back to 0 again, as if it's starting over
     timer.it_value.tv_sec = 0;        // initial delay again after reset
@@ -255,6 +255,7 @@ void thread_init() {
 	block->priority = 4;
 	block->thread_id = 1;
 	block->elapsed = 0;
+	gettimeofday(&block->start, NULL);
 	block->function = NULL;
 
 	Node* tcb_block = (Node *)malloc(sizeof(Node));
@@ -456,7 +457,7 @@ int worker_join(worker_t thread, void **value_ptr) {
 		return -1; // Thread not found
 	}
 	
-	printf("Thread ID: %d\n", curr->block->thread_id);
+	// printf("Thread ID: %d\n", curr->block->thread_id);
 
 	// Wait until the thread terminates
 	while (curr->block->status != Terminated) {
@@ -512,7 +513,7 @@ int worker_mutex_lock(worker_mutex_t *mutex) {
         // context switch to the scheduler thread
 
         // YOUR CODE HERE
-		printf("Inside mutex lock with lock: %d\n", mutex->id);
+		// printf("Inside mutex lock with lock: %d\n", mutex->id);
 		if (!mutex || mutex->id == 0) return -1;
 
 		worker_t thread_id = runq_curr->block->thread_id;
@@ -531,13 +532,13 @@ int worker_mutex_lock(worker_mutex_t *mutex) {
 			// dequeue(&runq_last, runq_curr, 0);  // Remove the thread from the run queue, but do not deallocate the resources
         	queue(mutex->queue, new_node);
 
-			printf("Thread %d is blocked by mutex %d\n", thread_id, mutex->id);
+			// printf("Thread %d is blocked by mutex %d\n", thread_id, mutex->id);
 			resume_timer();
 			swapcontext(runq_curr->block->context, &scheduler_ctx);
 		}
 
 		 // Successfully acquired lcok
-		printf("Thread %d acquired mutex %d\n", thread_id, mutex->id);
+		// printf("Thread %d acquired mutex %d\n", thread_id, mutex->id);
     	mutex->owner = thread_id;
 		resume_timer();
         return 0;
@@ -558,7 +559,7 @@ int worker_mutex_unlock(worker_mutex_t *mutex) {
 
 	pause_timer();
     // Release the lock
-	printf("Thread %d released mutex %d\n", runq_curr->block->thread_id, mutex->id);
+	// printf("Thread %d released mutex %d\n", runq_curr->block->thread_id, mutex->id);
 
 	atomic_store(&(mutex->locked), 0);
     mutex->owner = 0;
@@ -573,7 +574,7 @@ int worker_mutex_unlock(worker_mutex_t *mutex) {
 	
 	waiting_thread = waiting_thread->next;
 	worker_t thread = waiting_thread->block->thread_id;
-	printf("next thread: %d, %d\n", waiting_thread->block->thread_id, thread);
+	// printf("next thread: %d, %d\n", waiting_thread->block->thread_id, thread);
     if (waiting_thread != NULL) {
         // Dequeue the first thread from the mutex queue, do not deallocate
         dequeue(mutex->queue, waiting_thread, 0);
@@ -584,7 +585,7 @@ int worker_mutex_unlock(worker_mutex_t *mutex) {
 			ptr = ptr->next;
 		}
 		if(ptr->block->thread_id == thread) {
-			printf("Thread %d is ready\n", thread);
+			// printf("Thread %d is ready\n", thread);
 			ptr->block->status = Ready;
 			resume_timer();
 			return 0;	// Successfully set
@@ -658,9 +659,9 @@ static void sched_psjf() {
 		runq_curr->block->elapsed = 0;
 
 		// Move to the end of the queue.
-		printf("Thread %d has elapsed\n", runq_curr->block->thread_id);
-		printf("Moving thread %d to the end of the queue\n", runq_curr->block->thread_id);
-		printList(runq_last);
+		// printf("Thread %d has elapsed\n", runq_curr->block->thread_id);
+		// printf("Moving thread %d to the end of the queue\n", runq_curr->block->thread_id);
+		// printList(runq_last);
 		Node* prev = runq_curr;
 		while(prev->next != runq_curr) {
 			prev = prev->next;
@@ -678,8 +679,8 @@ static void sched_psjf() {
 			runq_last = runq_curr;
 			runq_curr = runq_curr->next;
 		}
-		printf("Moved thread %d to the end of the queue new Q \n", runq_curr->block->thread_id);
-		printList(runq_last);
+		// printf("Moved thread %d to the end of the queue new Q \n", runq_curr->block->thread_id);
+		// printList(runq_last);
 	}
 
 	runq_curr = runq_curr->next;
@@ -690,7 +691,7 @@ static void sched_psjf() {
 		runq_curr->block->status = Running;
 		// printList(runq_last);
 		// reset_timer();
-		printList(runq_last);
+		// printList(runq_last);
 
 		if(runq_curr->block->ran_first == 0) {
 			runq_curr->block->ran_first = 1;
@@ -701,11 +702,16 @@ static void sched_psjf() {
 			long int et = enda.tv_sec * 1000 + enda.tv_usec / 1000;
 			long int st = runq_curr->block->start.tv_sec * 1000 + runq_curr->block->start.tv_usec / 1000;
 			long int response_time = et - st;
-			printf("Current response time: %ld\n", response_time);
+			printf("Current response time is %ld - %ld = %ld\n",et, st, response_time);
 
 			// Calculate my averages
-			avg_resp_time = avg_resp_time + (response_time - avg_resp_time);
-			avg_resp_time = (tid_counter-1 <= 0) ? 1 : avg_resp_time / (tid_counter-1);
+			if(tid_counter == 1) {
+				avg_resp_time = response_time;
+			} else if(tid_counter == 2) {
+				avg_resp_time = (avg_resp_time + response_time) / 2;
+			} else {
+				avg_resp_time = ((avg_resp_time * (tid_counter - 1)) + response_time) / tid_counter;
+			}
 		}
 		swapcontext(&scheduler_ctx, runq_curr->block->context);
 	}
