@@ -22,6 +22,7 @@
 #include <ucontext.h>
 #include <signal.h>
 #include <stdatomic.h>
+#include <sys/time.h>
 
 typedef uint worker_t;
 
@@ -50,6 +51,8 @@ typedef struct TCB {
 	int priority;
 	// For the implementation of PSJF
 	int elapsed;
+	int ran_first;
+	struct timeval start;
 	void *(*function)(void*); 
 } tcb; 	
 

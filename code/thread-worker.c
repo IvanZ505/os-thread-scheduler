@@ -200,8 +200,8 @@ int reset_timer() {
 	printf("Resetting timer...\n");
 
     // Reset the timer back to 0 again, as if it's starting over
-    timer.it_value.tv_sec = 1;        // initial delay again after reset
-    timer.it_value.tv_usec = 0;
+    timer.it_value.tv_sec = 0;        // initial delay again after reset
+    timer.it_value.tv_usec = TIME_QUANTUM;
     timer.it_interval.tv_sec = 0;     // same interval after reset
     timer.it_interval.tv_usec = TIME_QUANTUM;
     setitimer(ITIMER_REAL, &timer, NULL);
@@ -215,6 +215,7 @@ void context_switch(int signum) {
 	// getcontext(runq_curr->block->context);
 	// printf("Timer interrupt switch...\n");
 	// Time has elapsed, set elapsed to 1
+	tot_cntx_switches++;
 	runq_curr->block->elapsed = 1;
 	swapcontext(runq_curr->block->context, &scheduler_ctx);
 }
@@ -272,8 +273,8 @@ void thread_init() {
 	// Create timer struct
 
 	// Set up what the timer should reset to after the timer goes off
-	timer.it_interval.tv_usec = 0; 
-	timer.it_interval.tv_sec = 1;
+	timer.it_interval.tv_usec = TIME_QUANTUM; 
+	timer.it_interval.tv_sec = 0;
 
 	timer.it_value.tv_usec = TIME_QUANTUM;
 	timer.it_value.tv_sec = 0;
@@ -346,6 +347,8 @@ int worker_create(worker_t* thread, pthread_attr_t * attr,
 	block->status = Ready;
 	block->priority = 4;
 	block->elapsed = 0;
+	block->ran_first = 0;
+	gettimeofday(&block->start, NULL);
 	block->thread_id = *thread;
 	block->function = function;
 
@@ -409,6 +412,7 @@ int worker_yield() {
 void worker_exit(void *value_ptr) {
 	// - de-allocate any dynamic memory created when starting this thread
 	// Swap context first? Before freeing???
+	pause_timer();
 	runq_curr->block->status = Terminated;
 	
 	// set value pointer... TF is this??? do i just set it to 1?
@@ -416,8 +420,20 @@ void worker_exit(void *value_ptr) {
 		saved_value_ptr = &value_ptr;
 	}
 
+	struct timeval end;
+	gettimeofday(&end, NULL);
+
+	// Calculate turnaround time
+	long int et = end.tv_sec * 1000 + end.tv_usec / 1000;
+	long int st = runq_curr->block->start.tv_sec * 1000 + runq_curr->block->start.tv_usec / 1000;
+	long int response_time = et - st;
+	printf("Current response time: %ld\n", response_time);
+	// Calculate my averages
+	avg_turn_time = avg_turn_time + ((response_time - avg_turn_time) / (tid_counter-1));
+
+	resume_timer();
 	swapcontext(runq_curr->block->context, &scheduler_ctx);
-};
+}
 
 
 /* Wait for thread termination */
@@ -676,6 +692,21 @@ static void sched_psjf() {
 		// reset_timer();
 		printList(runq_last);
 
+		if(runq_curr->block->ran_first == 0) {
+			runq_curr->block->ran_first = 1;
+			struct timeval enda;
+			gettimeofday(&enda, NULL);
+
+			// Calculate response time
+			long int et = enda.tv_sec * 1000 + enda.tv_usec / 1000;
+			long int st = runq_curr->block->start.tv_sec * 1000 + runq_curr->block->start.tv_usec / 1000;
+			long int response_time = et - st;
+			printf("Current response time: %ld\n", response_time);
+
+			// Calculate my averages
+			avg_resp_time = avg_resp_time + (response_time - avg_resp_time);
+			avg_resp_time = (tid_counter-1 <= 0) ? 1 : avg_resp_time / (tid_counter-1);
+		}
 		swapcontext(&scheduler_ctx, runq_curr->block->context);
 	}
 }

@@ -108,5 +108,6 @@ int main(int argc, char **argv) {
     printf("destroying mutex\n");
     worker_mutex_destroy(&i);
 
+    print_app_stats();
     return 0;
 }
