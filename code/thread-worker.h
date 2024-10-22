@@ -29,7 +29,8 @@ enum status {
 	Running,
 	Ready,
 	Blocked,
-	Terminated
+	Terminated,
+	Yielding
 };
 
 typedef struct TCB {
@@ -47,6 +48,8 @@ typedef struct TCB {
 	ucontext_t* context;
 	char* stack;
 	int priority;
+	// For the implementation of PSJF
+	int elapsed;
 	void *(*function)(void*); 
 } tcb; 	
 

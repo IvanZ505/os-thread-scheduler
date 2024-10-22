@@ -196,11 +196,26 @@ int resume_timer() {
 	return 0;
 }
 
+int reset_timer() {
+	printf("Resetting timer...\n");
+
+    // Reset the timer back to 0 again, as if it's starting over
+    timer.it_value.tv_sec = 1;        // initial delay again after reset
+    timer.it_value.tv_usec = 0;
+    timer.it_interval.tv_sec = 0;     // same interval after reset
+    timer.it_interval.tv_usec = TIME_QUANTUM;
+    setitimer(ITIMER_REAL, &timer, NULL);
+
+	return 0;
+}
+
 /* Handles swapping contexts when a time quantum elapses */
 void context_switch(int signum) {
 	// Do we need to add this
 	// getcontext(runq_curr->block->context);
 	// printf("Timer interrupt switch...\n");
+	// Time has elapsed, set elapsed to 1
+	runq_curr->block->elapsed = 1;
 	swapcontext(runq_curr->block->context, &scheduler_ctx);
 }
 
@@ -238,6 +253,7 @@ void thread_init() {
 	block->status = Ready;
 	block->priority = 4;
 	block->thread_id = 1;
+	block->elapsed = 0;
 	block->function = NULL;
 
 	Node* tcb_block = (Node *)malloc(sizeof(Node));
@@ -269,7 +285,7 @@ void thread_init() {
 }
 
 void worker_wrapper(void * arg){
-	printf("start of worker wrapper: id %d\n", runq_curr->block->thread_id);
+	// printf("start of worker wrapper: id %d\n", runq_curr->block->thread_id);
 	if (runq_curr && (runq_curr->block->status != Terminated)) {
 		void* r = runq_curr->block->function(arg);
 	}
@@ -329,6 +345,7 @@ int worker_create(worker_t* thread, pthread_attr_t * attr,
 	*thread = tid_counter;
 	block->status = Ready;
 	block->priority = 4;
+	block->elapsed = 0;
 	block->thread_id = *thread;
 	block->function = function;
 
@@ -428,7 +445,7 @@ int worker_join(worker_t thread, void **value_ptr) {
 	// Wait until the thread terminates
 	while (curr->block->status != Terminated) {
 		// printf("Waiting for: %d\n", curr->block->thread_id);
-		runq_curr->block->status = Ready;
+		runq_curr->block->status = Yielding;
 		worker_yield(); // Yield CPU while waiting
 	}
 
@@ -574,6 +591,8 @@ int worker_mutex_destroy(worker_mutex_t *mutex) {
 };
 
 /* scheduler */
+static void sched_psjf();
+
 static void schedule() {
 	// - every time a timer interrupt occurs, your worker thread library 
 	// should be contexted switched from a thread context to this 
@@ -588,20 +607,23 @@ static void schedule() {
 
 	// YOUR CODE HERE
 
-	// Temporary round robin scheduler
 	while (1) {
+
+		// Temporary round robin scheduler
+
 		// printList(runq_last);
-		runq_curr = runq_curr->next;
-		// printf("Switched to thread: %d with status %d\n", runq_curr->block->thread_id, runq_curr->block->status);
-		if(!(runq_curr->block->status == Terminated) && !(runq_curr->block->status == Blocked)) {
-			runq_curr->block->status = Running;
-			// printList(runq_last);
-			swapcontext(&scheduler_ctx, runq_curr->block->context);
-		}
+		// runq_curr = runq_curr->next;
+		// // printf("Switched to thread: %d with status %d\n", runq_curr->block->thread_id, runq_curr->block->status);
+		// if(!(runq_curr->block->status == Terminated) && !(runq_curr->block->status == Blocked)) {
+		// 	runq_curr->block->status = Running;
+		// 	// printList(runq_last);
+		// 	swapcontext(&scheduler_ctx, runq_curr->block->context);
+		// }
 		
 // - schedule policy
 #ifndef MLFQ
 	// Choose PSJF
+	sched_psjf();
 #else 
 	// Choose MLFQ
 #endif
@@ -615,6 +637,47 @@ static void sched_psjf() {
 	// (feel free to modify arguments and return types)
 
 	// YOUR CODE HERE
+	// Being brought back here because its yieldinggggg, handle the yielding!!!
+	if(runq_curr->block->elapsed == 1 || runq_curr->block->status == Yielding) {
+		runq_curr->block->elapsed = 0;
+
+		// Move to the end of the queue.
+		printf("Thread %d has elapsed\n", runq_curr->block->thread_id);
+		printf("Moving thread %d to the end of the queue\n", runq_curr->block->thread_id);
+		printList(runq_last);
+		Node* prev = runq_curr;
+		while(prev->next != runq_curr) {
+			prev = prev->next;
+		}
+		// If the thread has not finished, move it to the end of the queue
+		if(runq_curr != runq_last && runq_curr->next != runq_last) {
+			runq_curr->block->status = Ready;
+			prev->next = runq_curr->next;
+			runq_curr->next = runq_last->next;
+			runq_last->next = runq_curr;
+			runq_last = runq_curr;
+			runq_curr = runq_last->next;
+		}
+		else {
+			runq_last = runq_curr;
+			runq_curr = runq_curr->next;
+		}
+		printf("Moved thread %d to the end of the queue new Q \n", runq_curr->block->thread_id);
+		printList(runq_last);
+	}
+
+	runq_curr = runq_curr->next;
+
+	// printf("Switched to thread: %d with status %d\n", runq_curr->block->thread_id, runq_curr->block->status);
+
+	if(!(runq_curr->block->status == Terminated) && !(runq_curr->block->status == Blocked)) {
+		runq_curr->block->status = Running;
+		// printList(runq_last);
+		// reset_timer();
+		printList(runq_last);
+
+		swapcontext(&scheduler_ctx, runq_curr->block->context);
+	}
 }
 
 

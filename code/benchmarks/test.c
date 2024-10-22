@@ -105,5 +105,8 @@ int main(int argc, char **argv) {
     printf("joining thread %d\n", t2);
     pthread_join(t2, NULL);
 
+    printf("destroying mutex\n");
+    worker_mutex_destroy(&i);
+
     return 0;
 }
