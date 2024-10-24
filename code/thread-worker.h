@@ -13,6 +13,9 @@
 #define USE_WORKERS 1
 #define STACK_SIZE SIGSTKSZ
 
+#define TIME_QUANTUM 650000
+
+
 /* include lib header files that you need here: */
 #include <unistd.h>
 #include <sys/syscall.h>
@@ -53,6 +56,11 @@ typedef struct TCB {
 	int elapsed;
 	int ran_first;
 	struct timeval start;
+	// For the implementation of MLFQ
+	int yielded;
+	struct timeval runtime;
+	unsigned long total_runtime; 
+	int quantum_used;
 	void *(*function)(void*); 
 } tcb; 	
 
@@ -64,6 +72,10 @@ typedef struct TCB {
 #define MEDIUM_PRIO 2
 #define DEFAULT_PRIO 1
 #define LOW_PRIO 0
+
+// Refresh Quantum is how many time the Quantum to refresh the MLFQ's queues
+#define REFRESH_QUANTUM 10
+
 
 /* define your data structures here: */
 // Feel free to add your own auxiliary data structures (linked list or queue etc...)

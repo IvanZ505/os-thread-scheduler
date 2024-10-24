@@ -60,54 +60,79 @@ int val = 0;
 // 	return 0;
 // }
 
-pthread_t t1, t2;
-worker_mutex_t* i;
+// pthread_t t1, t2;
+// worker_mutex_t* i;
 
-void* print_periodically(void* arg) {
-    worker_mutex_lock(&i);
+// void* print_periodically(void* arg) {
+//     worker_mutex_lock(&i);
 
-    for (int i = 0; i < 6; i++) {
-        sleep(1);
-        printf("Printing some text, time = %d\n", i+1);
+//     for (int i = 0; i < 6; i++) {
+//         sleep(1);
+//         printf("Printing some text, time = %d\n", i+1);
+//     }
+//     int* result = (int*) malloc(sizeof(int));
+//     *result = 12;
+//     worker_mutex_unlock(&i);
+//     printf("exiting thread 2\n");
+//     pthread_exit(result);
+// }
+
+// void* print_periodically_again(void* arg) {
+//     worker_mutex_lock(&i);
+//     for (int i = 0; i < 3; i++) {
+//         sleep(2);
+//         printf("Printing some more text, time = %d\n", 2*(i+1));
+//     }
+//     worker_mutex_unlock(&i);
+//     printf("exiting thread 3\n");
+//     pthread_exit(NULL);
+// }
+
+// int main(int argc, char **argv) {
+//     worker_mutex_init(&i, NULL);
+
+//     pthread_create(&t1, NULL, &print_periodically, NULL);
+//     pthread_create(&t2, NULL, &print_periodically_again, NULL);
+
+//     printf("Our two threads are %d and %d\n", t1, t2);
+
+//     void* status;
+//     printf("joining thread %d\n", t1);
+//     pthread_join(t1, &status);
+//     printf("retval is %d\n", *((int*) status));
+//     free(status);
+
+//     printf("joining thread %d\n", t2);
+//     pthread_join(t2, NULL);
+
+//     printf("destroying mutex\n");
+//     worker_mutex_destroy(&i);
+
+//     print_app_stats();
+//     return 0;
+// }
+
+int foo() {
+    while (1) {
+        printf("foo\n");
     }
-    int* result = (int*) malloc(sizeof(int));
-    *result = 12;
-    worker_mutex_unlock(&i);
-    printf("exiting thread 2\n");
-    pthread_exit(result);
 }
 
-void* print_periodically_again(void* arg) {
-    worker_mutex_lock(&i);
-    for (int i = 0; i < 3; i++) {
-        sleep(2);
-        printf("Printing some more text, time = %d\n", 2*(i+1));
+int bar() {
+    while (1) {
+        
     }
-    worker_mutex_unlock(&i);
-    printf("exiting thread 3\n");
-    pthread_exit(NULL);
 }
 
-int main(int argc, char **argv) {
-    worker_mutex_init(&i, NULL);
+int threads[8] = {2,3,4,5,6,7,8,9};
 
-    pthread_create(&t1, NULL, &print_periodically, NULL);
-    pthread_create(&t2, NULL, &print_periodically_again, NULL);
+int main() {
+    for (int i = 1; i < 9; i++) {
+        printf("thread %d created\n", i+1);
+        pthread_create(threads+i-1, NULL, &foo, NULL);
+    }
 
-    printf("Our two threads are %d and %d\n", t1, t2);
-
-    void* status;
-    printf("joining thread %d\n", t1);
-    pthread_join(t1, &status);
-    printf("retval is %d\n", *((int*) status));
-    free(status);
-
-    printf("joining thread %d\n", t2);
-    pthread_join(t2, NULL);
-
-    printf("destroying mutex\n");
-    worker_mutex_destroy(&i);
-
-    print_app_stats();
-    return 0;
+    while (1) {
+        
+    }
 }
