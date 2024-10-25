@@ -436,6 +436,7 @@ int worker_yield() {
 	gettimeofday(&thread_endtime, NULL);
 	runq_curr->block->total_runtime += (thread_endtime.tv_sec * 1000 + thread_endtime.tv_usec / 1000) - (thread_starttime.tv_sec * 1000 + thread_starttime.tv_usec / 1000);
 	// Save the context
+	tot_cntx_switches++;
 	swapcontext(runq_curr->block->context, &scheduler_ctx);
 	return 0;
 };
@@ -466,6 +467,7 @@ void worker_exit(void *value_ptr) {
 	gettimeofday(&thread_endtime, NULL);
 	runq_curr->block->total_runtime += (thread_endtime.tv_sec * 1000 + thread_endtime.tv_usec / 1000) - (thread_starttime.tv_sec * 1000 + thread_starttime.tv_usec / 1000);
 	resume_timer();
+	tot_cntx_switches++;
 	swapcontext(runq_curr->block->context, &scheduler_ctx);
 }
 
@@ -571,6 +573,7 @@ int worker_mutex_lock(worker_mutex_t *mutex) {
 			gettimeofday(&thread_endtime, NULL);
 			runq_curr->block->total_runtime += (thread_endtime.tv_sec * 1000 + thread_endtime.tv_usec / 1000) - (thread_starttime.tv_sec * 1000 + thread_starttime.tv_usec / 1000);
 			resume_timer();
+			tot_cntx_switches++;
 			swapcontext(runq_curr->block->context, &scheduler_ctx);
 		}
 
