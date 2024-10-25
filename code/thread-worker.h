@@ -52,6 +52,7 @@ typedef struct TCB {
 	// For the implementation of PSJF
 	int elapsed;
 	int ran_first;
+	long int total_runtime;
 	struct timeval start;
 	void *(*function)(void*); 
 } tcb; 	
