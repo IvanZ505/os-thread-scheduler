@@ -51,6 +51,10 @@ struct itimerval timer;
 // Void ** value_ptr
 void **saved_value_ptr;
 
+// Current Thread runtime
+struct timeval thread_starttime;
+struct timeval thread_endtime;
+
 // scheduler
 static void schedule();
 void printList(Node* last);
@@ -248,12 +252,15 @@ int reset_timer() {
 
 /* Handles swapping contexts when a time quantum elapses */
 void context_switch(int signum) {
+	gettimeofday(&thread_endtime, NULL);
+	runq_curr->block->total_runtime += (thread_endtime.tv_sec * 1000 + thread_endtime.tv_usec / 1000) - (thread_starttime.tv_sec * 1000 + thread_starttime.tv_usec / 1000);
 	// Do we need to add this
 	// getcontext(runq_curr->block->context);
 	// printf("Timer interrupt switch...\n");
 	// Time has elapsed, set elapsed to 1
 	tot_cntx_switches++;
 	runq_curr->block->elapsed = 1;
+	
 	swapcontext(runq_curr->block->context, &scheduler_ctx);
 }
 
@@ -292,6 +299,7 @@ void thread_init() {
 	block->thread_id = 1;
 	block->elapsed = 0;
 	block->ran_first = 1;
+	block->total_runtime = 0;
 	gettimeofday(&block->start, NULL);
 	block->function = NULL;
 	block->yielded = 0;
@@ -335,6 +343,10 @@ void thread_init() {
 	setitimer(ITIMER_REAL, &timer, NULL);
 
 	scheduler_initialized = 1;
+
+	gettimeofday(&thread_starttime, NULL);
+
+	
 }
 
 void worker_wrapper(void * arg){
@@ -400,6 +412,7 @@ int worker_create(worker_t* thread, pthread_attr_t * attr,
 	block->priority = HIGH_PRIO;
 	block->elapsed = 0;
 	block->ran_first = 0;
+	block->total_runtime = 0;
 	gettimeofday(&block->start, NULL);
 	block->thread_id = *thread;
 	block->function = function;
@@ -494,9 +507,10 @@ int worker_yield() {
 
 	// YOUR CODE HERE
 	runq_curr->block->status = Ready;
+	gettimeofday(&thread_endtime, NULL);
+	runq_curr->block->total_runtime += (thread_endtime.tv_sec * 1000 + thread_endtime.tv_usec / 1000) - (thread_starttime.tv_sec * 1000 + thread_starttime.tv_usec / 1000);
 	runq_curr->block->yielded = 1;
 	// Save the context
-	getcontext(runq_curr->block->context);
 	swapcontext(runq_curr->block->context, &scheduler_ctx);
 	return 0;
 };
@@ -524,6 +538,8 @@ void worker_exit(void *value_ptr) {
 	// Calculate my averages
 	avg_turn_time = avg_turn_time + ((response_time - avg_turn_time) / (tid_counter-1));
 
+	gettimeofday(&thread_endtime, NULL);
+	runq_curr->block->total_runtime += (thread_endtime.tv_sec * 1000 + thread_endtime.tv_usec / 1000) - (thread_starttime.tv_sec * 1000 + thread_starttime.tv_usec / 1000);
 	resume_timer();
 	swapcontext(runq_curr->block->context, &scheduler_ctx);
 }
@@ -568,6 +584,8 @@ int worker_join(worker_t thread, void **value_ptr) {
 		*value_ptr = *saved_value_ptr;
 	}
 
+	gettimeofday(&thread_endtime, NULL);
+	runq_curr->block->total_runtime += (thread_endtime.tv_sec * 1000 + thread_endtime.tv_usec / 1000) - (thread_starttime.tv_sec * 1000 + thread_starttime.tv_usec / 1000);
 	// Remove from the run queue
 	dequeue(&runq_last, curr, 1);
 	return 0;
@@ -625,6 +643,8 @@ int worker_mutex_lock(worker_mutex_t *mutex) {
         	queue(mutex->queue, new_node);
 
 			// printf("Thread %d is blocked by mutex %d\n", thread_id, mutex->id);
+			gettimeofday(&thread_endtime, NULL);
+			runq_curr->block->total_runtime += (thread_endtime.tv_sec * 1000 + thread_endtime.tv_usec / 1000) - (thread_starttime.tv_sec * 1000 + thread_starttime.tv_usec / 1000);
 			resume_timer();
 			swapcontext(runq_curr->block->context, &scheduler_ctx);
 		}
@@ -749,6 +769,7 @@ static void sched_psjf() {
 
 	// YOUR CODE HERE
 	// Being brought back here because its yieldinggggg, handle the yielding!!!
+	pause_timer();
 	if(runq_curr->block->elapsed == 1 || runq_curr->block->status == Yielding) {
 		runq_curr->block->elapsed = 0;
 
@@ -777,8 +798,38 @@ static void sched_psjf() {
 		// printList(runq_last);
 	}
 
-	runq_curr = runq_curr->next;
+	// Run through loop and find the shortest runtime thread whose status is not Terminated or Blocked
+	Node* ptr = runq_curr;
+	long int shortest = LONG_MAX;
+	Node* shortest_thread;
 
+	if(ptr->block->total_runtime < shortest && ptr->block->status != Terminated && ptr->block->status != Blocked) {
+		shortest = ptr->block->total_runtime;
+		shortest_thread = ptr;
+	}
+
+	while(ptr->next != runq_curr) {
+		if((ptr->block->total_runtime < shortest) && (ptr->block->status != Terminated) && (ptr->block->status != Blocked)) {
+			shortest = ptr->block->total_runtime;
+			shortest_thread = ptr;
+		}
+		ptr = ptr->next;
+	}
+	
+	// Check if the last node is the shortest
+	if(runq_curr->block->total_runtime < shortest && runq_curr->block->status != Terminated && runq_curr->block->status != Blocked) {
+		shortest = runq_curr->block->total_runtime;
+		shortest_thread = ptr;
+	}
+
+	// printf("The shortest thread is %d with runtime %ld with status: %d\n", shortest_thread->block->thread_id, shortest_thread->block->total_runtime, shortest_thread->block->status);
+	
+	if(shortest_thread->block->status == Terminated || shortest_thread->block->status == Blocked) {
+		// printf("Thread %d is terminated or blocked\n", shortest_thread->block->thread_id);
+		runq_curr = runq_curr->next;
+	} else {
+		runq_curr = shortest_thread;
+	}
 	// printf("Switched to thread: %d with status %d\n", runq_curr->block->thread_id, runq_curr->block->status);
 
 	if(!(runq_curr->block->status == Terminated) && !(runq_curr->block->status == Blocked)) {
@@ -807,6 +858,9 @@ static void sched_psjf() {
 				avg_resp_time = ((avg_resp_time * (tid_counter - 1)) + response_time) / tid_counter;
 			}
 		}
+		gettimeofday(&thread_starttime, NULL);
+		resume_timer();
+
 		swapcontext(&scheduler_ctx, runq_curr->block->context);
 	}
 }
