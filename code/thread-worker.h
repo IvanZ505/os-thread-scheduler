@@ -13,7 +13,7 @@
 #define USE_WORKERS 1
 #define STACK_SIZE SIGSTKSZ
 
-#define TIME_QUANTUM 650000
+#define TIME_QUANTUM 10000
 
 
 /* include lib header files that you need here: */
@@ -55,7 +55,7 @@ typedef struct TCB {
 	// For the implementation of PSJF
 	int elapsed;
 	int ran_first;
-	long int total_runtime;
+	// long int total_runtime;
 	struct timeval start;
 	// For the implementation of MLFQ
 	int yielded;

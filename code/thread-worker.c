@@ -497,7 +497,6 @@ int worker_setschedprio(worker_t thread, int prio) {
 #endif
 
 
-
 /* give CPU possession to other user-level worker threads voluntarily */
 int worker_yield() {
 	
@@ -920,15 +919,18 @@ static void sched_mlfq() {
 			runq_curr->block->total_runtime += time_diff(&(runq_curr->block->runtime));
 			if (runq_curr->block->total_runtime >= TIME_QUANTUM && currPrio > LOW_PRIO) {
 				runq_curr->block->total_runtime = 0;
+				#ifdef MLFQ
 				worker_setschedprio(runq_curr->block->thread_id, currPrio-1);
+				#endif
 			}
 		} else {
 			// Used full time quantum
 			if (currPrio > LOW_PRIO) {	  
 				printf("setting prio at thread %d to %d\n", runq_curr->block->thread_id, currPrio-1);
 
+				#ifdef MLFQ
 				worker_setschedprio(runq_curr->block->thread_id, currPrio-1);
-
+				#endif
 				// Sets new current thread for current priority runq
 				if (!runq_curr_mlfq[currPrio] || runq_curr_mlfq[currPrio] == runq_curr_mlfq[currPrio]->next) {
 					runq_curr_mlfq[currPrio] = runq_last_mlfq[currPrio];
