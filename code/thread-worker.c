@@ -18,8 +18,6 @@
 
 #include "thread-worker.h"
 
-#define TIME_QUANTUM 10000
-
 //Global counter for total context switches and 
 //average turn around and response time
 long tot_cntx_switches=0;
@@ -33,6 +31,12 @@ double avg_resp_time=0;
 // TODO: Check extern stuff later
 Node* runq_last;
 Node* runq_curr;
+
+// Kinda jank solution but using it so keep conventions we already and to avoid having to rewrite alot of the code.
+// Node** runq_last_mlfq[NUMPRIO];
+Node* runq_last_mlfq[NUMPRIO];
+Node* runq_curr_mlfq[NUMPRIO];
+int quantum_counter = 0;
 
 // Saved scheduler contexts
 ucontext_t scheduler_ctx, main_ctx;
@@ -112,6 +116,11 @@ int dequeue(Node** last, Node* tcb_node, int freeing) {
 		}
 	}
 
+    // Node to delete is first in queue
+	if (current == tcb_node) {
+		prev = *last;
+	}
+
     // Traverse the list to find the node to delete
     while(current != *last && current != tcb_node) {
 		prev = current;
@@ -136,6 +145,18 @@ int dequeue(Node** last, Node* tcb_node, int freeing) {
 
 	// If we reach here, the node was not found in the list
 	return -1; // Indicate failure
+}
+
+Node* copyNode(Node* source) {
+	if (source == NULL) {
+		return NULL;
+	}
+
+	Node* newNode = (Node*) malloc(sizeof(Node));
+	newNode->block = source->block;
+	newNode->next = NULL;
+
+	return newNode;
 }
 
 void printList(Node* last) {
@@ -245,7 +266,6 @@ void context_switch(int signum) {
 
 /* Initializes the library and timer */
 void thread_init() {
-
 	// Initialize the scheduler context
 	if (getcontext(&scheduler_ctx) < 0){
 		perror("getcontext");
@@ -275,19 +295,33 @@ void thread_init() {
 	block->context = &main_ctx;
 	block->stack = NULL;
 	block->status = Ready;
-	block->priority = 4;
+	block->priority = HIGH_PRIO;
 	block->thread_id = 1;
 	block->elapsed = 0;
 	block->ran_first = 1;
 	block->total_runtime = 0;
 	gettimeofday(&block->start, NULL);
 	block->function = NULL;
+	block->yielded = 0;
 
 	Node* tcb_block = (Node *)malloc(sizeof(Node));
 	tcb_block->block = block;
 	queue(&runq_last, tcb_block);
-
 	runq_curr = tcb_block;
+
+	/* For MLFQ runq_last points to current runq priority
+	For PSJF, there is only 1 runq and by default set to max priority
+	(Priority does not matter for PSJF, but this so keep code consistant
+	between MLFQ and PSJF)*/  
+	#ifdef MLFQ
+		// for (int i = 0; i < NUMPRIO-1; i++) {
+		// 	runq_last_mlfq[i] = (Node**)malloc(sizeof(Node*));
+		// }
+		// runq_last_mlfq[NUMPRIO-1] = &runq_last;
+		runq_last_mlfq[NUMPRIO-1] = runq_last;
+		runq_curr_mlfq[NUMPRIO-1] = runq_curr;
+	#endif
+
 	// Initialize timer
 
 	// Copied from given sample, should change a little
@@ -375,13 +409,15 @@ int worker_create(worker_t* thread, pthread_attr_t * attr,
 	// Set up the TCB
 	*thread = tid_counter;
 	block->status = Ready;
-	block->priority = 4;
+	block->priority = HIGH_PRIO;
 	block->elapsed = 0;
 	block->ran_first = 0;
 	block->total_runtime = 0;
 	gettimeofday(&block->start, NULL);
 	block->thread_id = *thread;
 	block->function = function;
+	block->yielded = 0;
+
 
 	makecontext(cctx, (void *)&worker_wrapper, 1, arg);
 
@@ -405,21 +441,59 @@ int worker_create(worker_t* thread, pthread_attr_t * attr,
 
 #ifdef MLFQ
 /* This function gets called only for MLFQ scheduling set the worker priority. */
+// int worker_setschedprio(worker_t thread, int prio) {
+
+
+//    // Set the priority value to your thread's TCB
+//    // YOUR CODE HERE
+// 	for (int i = 0; i < NUMPRIO; i++) {
+// 		if ((*runq_last_mlfq[i]) != NULL) {
+// 			Node* ptr = (*runq_last_mlfq[i])->next;
+// 			while(ptr != (*runq_last_mlfq[i]) && ptr->block->thread_id != thread) {
+// 				ptr = ptr->next;
+// 			}
+// 			if(ptr->block->thread_id == thread) {
+// 				if (ptr->block->priority != prio) {
+// 					Node* copy = copyNode(ptr);
+// 					queue(runq_last_mlfq[prio], copy);
+// 					dequeue(runq_last_mlfq[i], ptr, 0);
+// 					ptr->block->priority = prio;
+// 				}
+
+// 				return 0;
+// 			}
+// 		}
+// 	}
+// 	return -1;
+// }
+
+
 int worker_setschedprio(worker_t thread, int prio) {
 
 
    // Set the priority value to your thread's TCB
    // YOUR CODE HERE
-   Node* ptr = runq_last->next;
-	while(ptr != runq_last && ptr->block->thread_id != thread) {
-		ptr = ptr->next;
-	}
-	if(ptr->block->thread_id == thread) {
-		ptr->block->priority = prio;
-		return 0;
+	for (int i = 0; i < NUMPRIO; i++) {
+		if ((runq_last_mlfq[i]) != NULL) {
+			Node* ptr = (runq_last_mlfq[i])->next;
+			while(ptr != (runq_last_mlfq[i]) && ptr->block->thread_id != thread) {
+				ptr = ptr->next;
+			}
+			if(ptr->block->thread_id == thread) {
+				if (ptr->block->priority != prio) {
+					Node* copy = copyNode(ptr);
+					queue(&runq_last_mlfq[prio], copy);
+					dequeue(&runq_last_mlfq[i], ptr, 0);
+					ptr->block->priority = prio;
+				}
+
+				return 0;
+			}
+		}
 	}
 	return -1;
 }
+
 #endif
 
 
@@ -435,6 +509,7 @@ int worker_yield() {
 	runq_curr->block->status = Ready;
 	gettimeofday(&thread_endtime, NULL);
 	runq_curr->block->total_runtime += (thread_endtime.tv_sec * 1000 + thread_endtime.tv_usec / 1000) - (thread_starttime.tv_sec * 1000 + thread_starttime.tv_usec / 1000);
+	runq_curr->block->yielded = 1;
 	// Save the context
 	swapcontext(runq_curr->block->context, &scheduler_ctx);
 	return 0;
@@ -646,6 +721,7 @@ int worker_mutex_destroy(worker_mutex_t *mutex) {
 
 /* scheduler */
 static void sched_psjf();
+static void sched_mlfq();
 
 static void schedule() {
 	// - every time a timer interrupt occurs, your worker thread library 
@@ -680,6 +756,7 @@ static void schedule() {
 	sched_psjf();
 #else 
 	// Choose MLFQ
+	sched_mlfq();
 #endif
 	}
 	// freeList(&runq_last);
@@ -788,13 +865,123 @@ static void sched_psjf() {
 	}
 }
 
+int time_diff(struct timeval* start) {
+	struct timeval currTime;
+
+    gettimeofday(&currTime, NULL);
+
+    long sec = currTime.tv_sec - start->tv_sec;
+    long usec = currTime.tv_usec - start->tv_usec;
+
+    if (usec < 0) {
+        sec--;
+        usec += 1000000;
+    }
+	return sec * 1000000 + usec;
+}
+
+int refresh_queue(Node** src, Node** dest) {
+	while (*src != NULL) {
+		Node* copy = copyNode(*src);
+		copy->block->priority = HIGH_PRIO;
+		dequeue(src, *src, 0);
+		queue(dest, copy);
+	}
+	*src = NULL;
+	printf("im tired\n");
+	printList(*src);
+	printList(*dest);
+	printf("\n");
+
+	return 0;
+}
 
 /* Preemptive MLFQ scheduling algorithm */
 static void sched_mlfq() {
-	// - your own implementation of MLFQ
-	// (feel free to modify arguments and return types)
+	if (tot_cntx_switches % REFRESH_QUANTUM != 0) {
+		struct timeval currTime;
+		int currPrio = runq_curr->block->priority;
 
-	// YOUR CODE HERE
+		// Important as our queue functions alter the runq_last input
+		runq_last_mlfq[currPrio] = runq_last;
+		// runq_curr_mlfq[currPrio] = runq_curr;
+
+		for (int i = 0; i < NUMPRIO; i++) {
+			printf("prio = %d: ", i);
+			printList(runq_last_mlfq[i]);
+		}
+		if (runq_curr->block->yielded == 1) {
+			printf("yielded!!");
+			// Yielded, we have to check if it has ran more than the time quantum
+			runq_curr->block->total_runtime += time_diff(&(runq_curr->block->runtime));
+			if (runq_curr->block->total_runtime >= TIME_QUANTUM && currPrio > LOW_PRIO) {
+				runq_curr->block->total_runtime = 0;
+				worker_setschedprio(runq_curr->block->thread_id, currPrio-1);
+			}
+		} else {
+			// Used full time quantum
+			if (currPrio > LOW_PRIO) {	  
+				printf("setting prio at thread %d to %d\n", runq_curr->block->thread_id, currPrio-1);
+
+				worker_setschedprio(runq_curr->block->thread_id, currPrio-1);
+
+				// Sets new current thread for current priority runq
+				if (!runq_curr_mlfq[currPrio] || runq_curr_mlfq[currPrio] == runq_curr_mlfq[currPrio]->next) {
+					runq_curr_mlfq[currPrio] = runq_last_mlfq[currPrio];
+				}
+			}
+		}
+
+		// Selects thread and maintains RR among the queue lines
+		Node* ptr;
+		Node* last_node;
+		for (int i = NUMPRIO-1; i >= 0; i--) {
+			if (runq_last_mlfq[i]) {
+				last_node = ptr;
+				if (runq_curr_mlfq[i]) {
+					ptr = runq_curr_mlfq[i]->next;
+				} else {
+					ptr = runq_last_mlfq[i]->next;				
+				}
+				do {
+					if(!(ptr->block->status == Terminated) && !(ptr->block->status == Blocked)) {
+						runq_curr_mlfq[i] = ptr;
+						runq_curr = ptr;
+						runq_last = runq_last_mlfq[i];
+
+						runq_curr->block->status = Running;
+						runq_curr->block->yielded = 0;
+						// Kinda jank, I should find better solution
+						i = 0;
+						break;
+					}
+					ptr = ptr->next;				
+				} while (ptr != last_node);
+			}
+		}
+	} else {
+		// Refreshes queue by moving all the jobs back to the top queue every REFRESH_QUANTUM times the TIME_QUANTUM
+		printf("Its time to refresh\n");
+		for (int i = NUMPRIO-2; i >= 0; i--) {
+			if(runq_last_mlfq[i]) {
+				printf("\nrefreshing prio %d\n", i);
+				refresh_queue(&(runq_last_mlfq[i]), &runq_last_mlfq[NUMPRIO-1]);
+				runq_curr_mlfq[i] = NULL;
+				runq_last_mlfq[i] = NULL;
+			}
+		}
+
+		// Sets new runq_curr and runq_last
+		if (runq_curr_mlfq[NUMPRIO-1]){
+			runq_curr = runq_curr_mlfq[NUMPRIO-1];
+		} else {
+			runq_curr = runq_last_mlfq[NUMPRIO-1]->next;
+		}
+		runq_last = runq_last_mlfq[NUMPRIO-1];
+	}
+	printf("running thread %d\n", runq_curr->block->thread_id);
+	gettimeofday(&(runq_curr->block->runtime), NULL);
+	swapcontext(&scheduler_ctx, runq_curr->block->context);
 }
 
 //DO NOT MODIFY THIS FUNCTION
