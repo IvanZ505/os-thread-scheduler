@@ -55,6 +55,7 @@ typedef struct TCB {
 	// For the implementation of PSJF
 	int elapsed;
 	int ran_first;
+	long int total_runtime;
 	struct timeval start;
 	// For the implementation of MLFQ
 	int yielded;
