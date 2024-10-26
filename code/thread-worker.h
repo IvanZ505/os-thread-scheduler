@@ -1,8 +1,8 @@
 // File:	worker_t.h
 
 // List all group member's name:
-// username of iLab:
-// iLab Server:
+//Pedro Torres (pt397) and Ivan Zheng (iz60)
+// iLab Server: vi.cs.rutgers.edu, ilab1.cs.rutgers.edu
 
 #ifndef WORKER_T_H
 #define WORKER_T_H
