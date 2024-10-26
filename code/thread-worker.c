@@ -24,19 +24,20 @@ long tot_cntx_switches=0;
 double avg_turn_time=0;
 double avg_resp_time=0;
 
+long int total_running_time=0;
 
 // INITAILIZE ALL YOUR OTHER VARIABLES HERE
 // YOUR CODE HERE
 
-// TODO: Check extern stuff later
 Node* runq_last;
 Node* runq_curr;
 
-// Kinda jank solution but using it so keep conventions we already and to avoid having to rewrite alot of the code.
-// Node** runq_last_mlfq[NUMPRIO];
+
+// Used for MLFQ
+#ifdef MLFQ
 Node* runq_last_mlfq[NUMPRIO];
 Node* runq_curr_mlfq[NUMPRIO];
-int quantum_counter = 0;
+#endif
 
 // Saved scheduler contexts
 ucontext_t scheduler_ctx, main_ctx;
@@ -74,7 +75,6 @@ int queue(Node** last, Node* tcb_node) {
 	(*last)->next = tcb_node;
 	(*last) = (*last)->next;
 
-	// (*last) = (*last)->next;
 	return 0;
 }
 
@@ -85,8 +85,6 @@ int dequeue(Node** last, Node* tcb_node, int freeing) {
         return -1; // Indicate failure
     }
 
-	// printf("Dequeueing %d\n", tcb_node->block->thread_id);
-	// printList(*last);
     Node *current = (*last)->next, *prev = NULL;
 
     // Case 1: If the node to be removed is the only node in the list
@@ -97,7 +95,7 @@ int dequeue(Node** last, Node* tcb_node, int freeing) {
 			free(current->block->context);
 			free(current->block);
 		}
-		if(freeing == 1) free(current);
+		if(freeing == 1 || freeing == 2) free(current);
         *last = NULL; // List is now empty
         return 0;     // Indicate success
     }
@@ -111,7 +109,7 @@ int dequeue(Node** last, Node* tcb_node, int freeing) {
 				free(current->block->context);
 				free(current->block);
 			}
-			if(freeing == 1) free(current);
+			if(freeing == 1 || freeing == 2) free(current);
 			return 0; // Indicate success
 		}
 	}
@@ -128,8 +126,6 @@ int dequeue(Node** last, Node* tcb_node, int freeing) {
 	}
 
 	if (current == tcb_node) {
-		// printf("%d\n", prev->block->thread_id);
-		// printf("%d\n", current->block->thread_id);
 		prev->next = current->next;
 		if (freeing == 1 && current->block->stack != NULL) {
 			free(current->block->stack);
@@ -139,7 +135,7 @@ int dequeue(Node** last, Node* tcb_node, int freeing) {
 		if(current == *last) {
 			*last = prev;
 		}
-		if(freeing == 1) free(current);
+		if(freeing == 1 || freeing == 2) free(current);
 		return 0; // Indicate success
 	}
 
@@ -238,8 +234,6 @@ int resume_timer() {
 }
 
 int reset_timer() {
-	// printf("Resetting timer...\n");
-
     // Reset the timer back to 0 again, as if it's starting over
     timer.it_value.tv_sec = 0;        // initial delay again after reset
     timer.it_value.tv_usec = TIME_QUANTUM;
@@ -254,11 +248,10 @@ int reset_timer() {
 void context_switch(int signum) {
 	gettimeofday(&thread_endtime, NULL);
 	runq_curr->block->total_runtime += (thread_endtime.tv_sec * 1000 + thread_endtime.tv_usec / 1000) - (thread_starttime.tv_sec * 1000 + thread_starttime.tv_usec / 1000);
-	// Do we need to add this
-	// getcontext(runq_curr->block->context);
-	// printf("Timer interrupt switch...\n");
-	// Time has elapsed, set elapsed to 1
+
 	tot_cntx_switches++;
+	
+	// Time has elapsed, set elapsed to 1
 	runq_curr->block->elapsed = 1;
 	
 	swapcontext(runq_curr->block->context, &scheduler_ctx);
@@ -271,6 +264,8 @@ void thread_init() {
 		perror("getcontext");
 		exit(1);
 	}
+	
+	// Not possible to free mallocs from scheduler and main context
 	scheduler_ctx.uc_link = NULL;
 	scheduler_ctx.uc_stack.ss_sp = malloc(STACK_SIZE);
 	scheduler_ctx.uc_stack.ss_size = STACK_SIZE;
@@ -281,9 +276,7 @@ void thread_init() {
 
 
 	/* Initialize the caller context
-	This assumes the caller of the first call to create_worker will be the only
-	thread to call create_worker. If a create_worker thread tried to call create_worker,
-	it would work in theory but the caller thread's state will not be able to be saved (I think, this shit is hard)
+	This assumes the caller of the first call to create_worker will be the main context
 	*/
 	if (getcontext(&main_ctx) == -1){
 		perror("Getcontext failed");
@@ -303,7 +296,7 @@ void thread_init() {
 	gettimeofday(&block->start, NULL);
 	block->function = NULL;
 	block->yielded = 0;
-
+	
 	Node* tcb_block = (Node *)malloc(sizeof(Node));
 	tcb_block->block = block;
 	queue(&runq_last, tcb_block);
@@ -314,17 +307,11 @@ void thread_init() {
 	(Priority does not matter for PSJF, but this so keep code consistant
 	between MLFQ and PSJF)*/  
 	#ifdef MLFQ
-		// for (int i = 0; i < NUMPRIO-1; i++) {
-		// 	runq_last_mlfq[i] = (Node**)malloc(sizeof(Node*));
-		// }
-		// runq_last_mlfq[NUMPRIO-1] = &runq_last;
 		runq_last_mlfq[NUMPRIO-1] = runq_last;
 		runq_curr_mlfq[NUMPRIO-1] = runq_curr;
 	#endif
 
 	// Initialize timer
-
-	// Copied from given sample, should change a little
 
 	// Use sigaction to register signal handler
 	memset(&sa, 0, sizeof(sa));
@@ -423,56 +410,42 @@ int worker_create(worker_t* thread, pthread_attr_t * attr,
 
 	Node* tcb_block = (Node *)malloc(sizeof(Node));
 	tcb_block->block = block;
+
+	#ifdef MLFQ
+	//Always queue new threads to top prio
+	queue(&runq_last_mlfq[NUMPRIO-1], tcb_block);
+	#else
 	queue(&runq_last, tcb_block);
+	#endif
 
-	// Used to test out LL, remember to delete or move else where
-	// printList(runq_last);
-
-	// if (tcb_block->block->thread_id == 5) {
-	// 	dequeue(&runq_last, runq_last->next->next);
-	// 	printf("\n");
-	// 	printList(runq_last);
-	// } else if (tcb_block->block->thread_id == 9) {
-	// 	freeList(&runq_last);
-	// }
-    // return 0;
 	return *thread;
 };
 
 #ifdef MLFQ
-/* This function gets called only for MLFQ scheduling set the worker priority. */
-// int worker_setschedprio(worker_t thread, int prio) {
+// Used to traverse the multiple queues to find a specific thread
+Node* runq_traverser(worker_t thread) {
+	for (int i = 0; i < NUMPRIO; i++) {
+		if ((runq_last_mlfq[i]) != NULL) {
+			Node* ptr = (runq_last_mlfq[i])->next;
+			while(ptr != (runq_last_mlfq[i]) && ptr->block->thread_id != thread) {
+				ptr = ptr->next;
+			}
+			if(ptr->block->thread_id == thread) {
+				return ptr;
+			}
+		}
+	}
+	return NULL;
+}
 
-
-//    // Set the priority value to your thread's TCB
-//    // YOUR CODE HERE
-// 	for (int i = 0; i < NUMPRIO; i++) {
-// 		if ((*runq_last_mlfq[i]) != NULL) {
-// 			Node* ptr = (*runq_last_mlfq[i])->next;
-// 			while(ptr != (*runq_last_mlfq[i]) && ptr->block->thread_id != thread) {
-// 				ptr = ptr->next;
-// 			}
-// 			if(ptr->block->thread_id == thread) {
-// 				if (ptr->block->priority != prio) {
-// 					Node* copy = copyNode(ptr);
-// 					queue(runq_last_mlfq[prio], copy);
-// 					dequeue(runq_last_mlfq[i], ptr, 0);
-// 					ptr->block->priority = prio;
-// 				}
-
-// 				return 0;
-// 			}
-// 		}
-// 	}
-// 	return -1;
-// }
-
-
+// We don't want worker_setschedprio to be context switched, so there we made two worker_setschedprio
+// One has a timer pause built in (for when clients need to call worker_setschedprio) and 
+// worker_setschedprio_notimer for when the scheduler needs to call worker_setschedprio, since
+// the scheduler already has a pause
 int worker_setschedprio(worker_t thread, int prio) {
-
-
    // Set the priority value to your thread's TCB
    // YOUR CODE HERE
+   pause_timer();
 	for (int i = 0; i < NUMPRIO; i++) {
 		if ((runq_last_mlfq[i]) != NULL) {
 			Node* ptr = (runq_last_mlfq[i])->next;
@@ -481,20 +454,95 @@ int worker_setschedprio(worker_t thread, int prio) {
 			}
 			if(ptr->block->thread_id == thread) {
 				if (ptr->block->priority != prio) {
+					int currPrio = ptr->block->priority;
 					Node* copy = copyNode(ptr);
 					queue(&runq_last_mlfq[prio], copy);
-					dequeue(&runq_last_mlfq[i], ptr, 0);
-					ptr->block->priority = prio;
-				}
 
+					// if (runq_curr_mlfq[i] == ptr) {
+					// 	runq_curr_mlfq[i] = NULL;
+					// }
+					
+					dequeue(&runq_last_mlfq[i], ptr, 0);
+
+					copy->block->priority = prio;
+
+					// sets new runq_curr_mlfq based new conditions 
+					if (runq_curr_mlfq[i]) {
+						if (runq_curr_mlfq[i]->block->priority != i) {
+							if (!runq_last_mlfq[i]) {
+								// current prio runq is empty so no current node
+								runq_curr_mlfq[i] = NULL;
+							} else {
+								// sets default current node to start of runq
+								runq_curr_mlfq[i] = runq_last_mlfq[i]->next;
+							}
+						}
+					} else {
+						if (runq_last_mlfq[i]) {
+							// sets default current node to start of runq
+							runq_curr_mlfq[i] = runq_last_mlfq[i]->next;
+
+						} else {
+								// current prio runq is empty so no current node
+							runq_curr_mlfq[i] = NULL;
+						}
+					}	
+				}
+				resume_timer();
+				return 0;
+			}
+		}
+	}
+	resume_timer();
+	return -1;
+}
+
+int worker_setschedprio_notimer(worker_t thread, int prio) {
+   // Set the priority value to your thread's TCB
+   // YOUR CODE HERE
+	for (int i = 0; i < NUMPRIO; i++) {
+		if ((runq_last_mlfq[i]) != NULL) {
+			Node* ptr = (runq_last_mlfq[i])->next;
+			while((ptr != runq_last_mlfq[i]) && (ptr->block->thread_id != thread)) {
+				ptr = ptr->next;	
+			}
+			if(ptr->block->thread_id == thread) {
+				if (ptr->block->priority != prio) {
+					Node* copy = copyNode(ptr);
+					queue(&runq_last_mlfq[prio], copy);
+
+					// if (runq_curr_mlfq[i] == ptr) {
+					// 	runq_curr_mlfq[i] = NULL;
+					// }
+					
+					dequeue(&runq_last_mlfq[i], ptr, 0);
+					copy->block->priority = prio;
+
+					if (runq_curr_mlfq[i]) {
+						if (runq_curr_mlfq[i]->block->priority != i) {
+							if (!runq_last_mlfq[i]) {
+								runq_curr_mlfq[i] = NULL;
+							} else {
+								runq_curr_mlfq[i] = runq_last_mlfq[i]->next;
+							}
+						}
+					} else {
+						if (runq_last_mlfq[i]) {
+							runq_curr_mlfq[i] = runq_last_mlfq[i]->next;
+
+						} else {
+							runq_curr_mlfq[i] = NULL;
+						}
+					}
+				}
 				return 0;
 			}
 		}
 	}
 	return -1;
 }
-
 #endif
+
 
 
 /* give CPU possession to other user-level worker threads voluntarily */
@@ -554,7 +602,14 @@ int worker_join(worker_t thread, void **value_ptr) {
 	// - de-allocate any dynamic memory created by the joining thread
   
 	// YOUR CODE HERE
-	Node* curr = runq_last->next;
+	Node* curr;
+	#ifdef MLFQ
+	curr = runq_traverser(thread);
+	if (!curr) {
+		return -1;// Thread not found
+	}
+	#else
+	curr = runq_last->next;
 
 	// Traverse the run queue to find the thread with the matching thread_id
 	while (curr != runq_last && curr->block->thread_id != thread) {
@@ -562,19 +617,15 @@ int worker_join(worker_t thread, void **value_ptr) {
 	}
 
 	if (curr->block->thread_id != thread) {
-		// printList(runq_last);
-		// printf("thread %d not found\n", thread);
 		return -1; // Thread not found
 	}
-	
-	// printf("Thread ID: %d\n", curr->block->thread_id);
+	#endif
 
 	// Wait until the thread terminates
 	while (curr->block->status != Terminated) {
-		// printf("Waiting for: %d\n", curr->block->thread_id);
 		runq_curr->block->status = Yielding;
 		worker_yield(); // Yield CPU while waiting
-	}
+	}	
 
 	// Deallocate the thread's resources
 	// free(curr->block->stack);
@@ -611,7 +662,6 @@ int worker_mutex_init(worker_mutex_t *mutex,
 	mutex->queue = malloc(sizeof(Node *));
 	*(mutex->queue) = NULL;
 	mutex->id = ++mutex_counter;
-	// printf("Mutex %d initialized\n", mutex->id);
 	resume_timer();
 	return 0;
 };
@@ -644,7 +694,6 @@ int worker_mutex_lock(worker_mutex_t *mutex) {
 			// dequeue(&runq_last, runq_curr, 0);  // Remove the thread from the run queue, but do not deallocate the resources
         	queue(mutex->queue, new_node);
 
-			// printf("Thread %d is blocked by mutex %d\n", thread_id, mutex->id);
 			gettimeofday(&thread_endtime, NULL);
 			runq_curr->block->total_runtime += (thread_endtime.tv_sec * 1000 + thread_endtime.tv_usec / 1000) - (thread_starttime.tv_sec * 1000 + thread_starttime.tv_usec / 1000);
 			resume_timer();
@@ -652,8 +701,7 @@ int worker_mutex_lock(worker_mutex_t *mutex) {
 			swapcontext(runq_curr->block->context, &scheduler_ctx);
 		}
 
-		 // Successfully acquired lcok
-		// printf("Thread %d acquired mutex %d\n", thread_id, mutex->id);
+		// Successfully acquired lcok
     	mutex->owner = thread_id;
 		resume_timer();
         return 0;
@@ -695,10 +743,16 @@ int worker_mutex_unlock(worker_mutex_t *mutex) {
         dequeue(mutex->queue, waiting_thread, 0);
 		free(waiting_thread);
         // Change runq status to Ready
+
+		Node* ptr;
+		#ifdef MLFQ
+		ptr = runq_traverser(thread);
+		#else
 		Node* ptr = runq_last->next;
 		while(ptr != runq_last && ptr->block->thread_id != thread) {
 			ptr = ptr->next;
 		}
+		#endif
 		if(ptr->block->thread_id == thread) {
 			// printf("Thread %d is ready\n", thread);
 			ptr->block->status = Ready;
@@ -726,6 +780,30 @@ int worker_mutex_destroy(worker_mutex_t *mutex) {
 static void sched_psjf();
 static void sched_mlfq();
 
+// Calcualates average response time
+static void update_avg_response(Node* t) {
+	if(t->block->ran_first == 0) {
+		t->block->ran_first = 1;
+		struct timeval enda;
+		gettimeofday(&enda, NULL);
+
+		// Calculate response time
+		long int et = enda.tv_sec * 1000 + enda.tv_usec / 1000;
+		long int st = t->block->start.tv_sec * 1000 + t->block->start.tv_usec / 1000;
+		long int response_time = et - st;
+		// printf("Current response time is %ld - %ld = %ld\n",et, st, response_time);
+
+		// Calculate my averages
+		if(tid_counter == 1) {
+			avg_resp_time = response_time;
+		} else if(tid_counter == 2) {
+			avg_resp_time = (avg_resp_time + response_time) / 2;
+		} else {
+			avg_resp_time = ((avg_resp_time * (tid_counter - 1)) + response_time) / tid_counter;
+		}
+	}
+}
+
 static void schedule() {
 	// - every time a timer interrupt occurs, your worker thread library 
 	// should be contexted switched from a thread context to this 
@@ -741,18 +819,6 @@ static void schedule() {
 	// YOUR CODE HERE
 
 	while (1) {
-
-		// Temporary round robin scheduler
-
-		// printList(runq_last);
-		// runq_curr = runq_curr->next;
-		// // printf("Switched to thread: %d with status %d\n", runq_curr->block->thread_id, runq_curr->block->status);
-		// if(!(runq_curr->block->status == Terminated) && !(runq_curr->block->status == Blocked)) {
-		// 	runq_curr->block->status = Running;
-		// 	// printList(runq_last);
-		// 	swapcontext(&scheduler_ctx, runq_curr->block->context);
-		// }
-		
 // - schedule policy
 #ifndef MLFQ
 	// Choose PSJF
@@ -762,7 +828,6 @@ static void schedule() {
 	sched_mlfq();
 #endif
 	}
-	// freeList(&runq_last);
 }
 
 /* Pre-emptive Shortest Job First (POLICY_PSJF) scheduling algorithm */
@@ -841,31 +906,23 @@ static void sched_psjf() {
 		// reset_timer();
 		// printList(runq_last);
 
-		if(runq_curr->block->ran_first == 0) {
-			runq_curr->block->ran_first = 1;
-			struct timeval enda;
-			gettimeofday(&enda, NULL);
-
-			// Calculate response time
-			long int et = enda.tv_sec * 1000 + enda.tv_usec / 1000;
-			long int st = runq_curr->block->start.tv_sec * 1000 + runq_curr->block->start.tv_usec / 1000;
-			long int response_time = et - st;
-			// printf("Current response time is %ld - %ld = %ld\n",et, st, response_time);
-
-			// Calculate my averages
-			if(tid_counter == 1) {
-				avg_resp_time = response_time;
-			} else if(tid_counter == 2) {
-				avg_resp_time = (avg_resp_time + response_time) / 2;
-			} else {
-				avg_resp_time = ((avg_resp_time * (tid_counter - 1)) + response_time) / tid_counter;
-			}
-		}
+		update_avg_response(runq_curr);
 		gettimeofday(&thread_starttime, NULL);
 		resume_timer();
 
 		swapcontext(&scheduler_ctx, runq_curr->block->context);
 	}
+}
+
+// copies nodes from one LL to another
+int refresh_queue(Node** src, Node** dest) {
+	while (*src != NULL) {
+		Node* copy = copyNode(*src);
+		copy->block->priority = HIGH_PRIO;
+		dequeue(src, *src, 0);
+		queue(dest, copy);
+	}
+	return 0;
 }
 
 int time_diff(struct timeval* start) {
@@ -883,58 +940,43 @@ int time_diff(struct timeval* start) {
 	return sec * 1000000 + usec;
 }
 
-int refresh_queue(Node** src, Node** dest) {
-	while (*src != NULL) {
-		Node* copy = copyNode(*src);
-		copy->block->priority = HIGH_PRIO;
-		dequeue(src, *src, 0);
-		queue(dest, copy);
-	}
-	*src = NULL;
-	printf("im tired\n");
-	printList(*src);
-	printList(*dest);
-	printf("\n");
-
-	return 0;
-}
 
 /* Preemptive MLFQ scheduling algorithm */
+#ifdef MLFQ
 static void sched_mlfq() {
-	if (tot_cntx_switches % REFRESH_QUANTUM != 0) {
+	pause_timer();
+
+	total_running_time += (thread_endtime.tv_sec * 1000 + thread_endtime.tv_usec / 1000) - (thread_starttime.tv_sec * 1000 + thread_starttime.tv_usec / 1000);;
+
+	// The time duration for runq refresh is measured in how many times the time quantum has passed
+	if (total_running_time < REFRESH_QUANTUM) {
 		struct timeval currTime;
 		int currPrio = runq_curr->block->priority;
+		int currThreadId = runq_curr->block->thread_id;
 
 		// Important as our queue functions alter the runq_last input
-		runq_last_mlfq[currPrio] = runq_last;
-		// runq_curr_mlfq[currPrio] = runq_curr;
+		// if (runq_last->block->priority == currPrio) {
+		// 	runq_last_mlfq[currPrio] = runq_last;
+		// }
 
-		for (int i = 0; i < NUMPRIO; i++) {
-			printf("prio = %d: ", i);
-			printList(runq_last_mlfq[i]);
-		}
 		if (runq_curr->block->yielded == 1) {
-			printf("yielded!!");
 			// Yielded, we have to check if it has ran more than the time quantum
-			runq_curr->block->total_runtime += time_diff(&(runq_curr->block->runtime));
-			if (runq_curr->block->total_runtime >= TIME_QUANTUM && currPrio > LOW_PRIO) {
+			if (runq_curr->block->total_runtime >= TIME_QUANTUM) {
 				runq_curr->block->total_runtime = 0;
-				#ifdef MLFQ
-				worker_setschedprio(runq_curr->block->thread_id, currPrio-1);
-				#endif
+				if (currPrio > LOW_PRIO) {
+					if (worker_setschedprio_notimer(runq_curr->block->thread_id, currPrio-1) == -1) {
+						perror("Failed to set prio");		
+					}
+					runq_curr = runq_curr_mlfq[currPrio];
+				}
 			}
 		} else {
 			// Used full time quantum
-			if (currPrio > LOW_PRIO) {	  
-				printf("setting prio at thread %d to %d\n", runq_curr->block->thread_id, currPrio-1);
-
-				#ifdef MLFQ
-				worker_setschedprio(runq_curr->block->thread_id, currPrio-1);
-				#endif
-				// Sets new current thread for current priority runq
-				if (!runq_curr_mlfq[currPrio] || runq_curr_mlfq[currPrio] == runq_curr_mlfq[currPrio]->next) {
-					runq_curr_mlfq[currPrio] = runq_last_mlfq[currPrio];
+			if (currPrio > LOW_PRIO) {	 
+				if (worker_setschedprio_notimer(runq_curr->block->thread_id, currPrio-1) == -1) {
+					perror("Failed to set prio");
 				}
+				runq_curr = runq_curr_mlfq[currPrio];		
 			}
 		}
 
@@ -943,21 +985,22 @@ static void sched_mlfq() {
 		Node* last_node;
 		for (int i = NUMPRIO-1; i >= 0; i--) {
 			if (runq_last_mlfq[i]) {
-				last_node = ptr;
-				if (runq_curr_mlfq[i]) {
-					ptr = runq_curr_mlfq[i]->next;
-				} else {
-					ptr = runq_last_mlfq[i]->next;				
+				// Grabs next thread in queue to maintain RR order
+				if (!runq_curr_mlfq[i]) {
+					runq_curr_mlfq[i] = runq_last_mlfq[i];
 				}
+				ptr = runq_curr_mlfq[i]->next;
+
+				last_node = ptr;
 				do {
-					if(!(ptr->block->status == Terminated) && !(ptr->block->status == Blocked)) {
+					if((ptr->block->thread_id != currThreadId) && !(ptr->block->status == Terminated) && !(ptr->block->status == Blocked)) {
 						runq_curr_mlfq[i] = ptr;
 						runq_curr = ptr;
 						runq_last = runq_last_mlfq[i];
 
 						runq_curr->block->status = Running;
 						runq_curr->block->yielded = 0;
-						// Kinda jank, I should find better solution
+
 						i = 0;
 						break;
 					}
@@ -966,18 +1009,17 @@ static void sched_mlfq() {
 			}
 		}
 	} else {
+		total_running_time = 0;
 		// Refreshes queue by moving all the jobs back to the top queue every REFRESH_QUANTUM times the TIME_QUANTUM
-		printf("Its time to refresh\n");
 		for (int i = NUMPRIO-2; i >= 0; i--) {
 			if(runq_last_mlfq[i]) {
-				printf("\nrefreshing prio %d\n", i);
-				refresh_queue(&(runq_last_mlfq[i]), &runq_last_mlfq[NUMPRIO-1]);
+				refresh_queue(&(runq_last_mlfq[i]->next), &runq_last_mlfq[NUMPRIO-1]);
 				runq_curr_mlfq[i] = NULL;
 				runq_last_mlfq[i] = NULL;
 			}
 		}
 
-		// Sets new runq_curr and runq_last
+		// Sets new runq_curr and runq_last for top runq
 		if (runq_curr_mlfq[NUMPRIO-1]){
 			runq_curr = runq_curr_mlfq[NUMPRIO-1];
 		} else {
@@ -985,11 +1027,12 @@ static void sched_mlfq() {
 		}
 		runq_last = runq_last_mlfq[NUMPRIO-1];
 	}
-	printf("running thread %d\n", runq_curr->block->thread_id);
-	gettimeofday(&(runq_curr->block->runtime), NULL);
+	update_avg_response(runq_curr);
+	resume_timer();
+	gettimeofday(&thread_starttime, NULL);
 	swapcontext(&scheduler_ctx, runq_curr->block->context);
 }
-
+#endif
 //DO NOT MODIFY THIS FUNCTION
 /* Function to print global statistics. Do not modify this function.*/
 void print_app_stats(void) {

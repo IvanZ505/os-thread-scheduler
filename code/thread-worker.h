@@ -60,7 +60,6 @@ typedef struct TCB {
 	// For the implementation of MLFQ
 	int yielded;
 	struct timeval runtime;
-	unsigned long total_runtime; 
 	int quantum_used;
 	void *(*function)(void*); 
 } tcb; 	
@@ -75,7 +74,7 @@ typedef struct TCB {
 #define LOW_PRIO 0
 
 // Refresh Quantum is how many time the Quantum to refresh the MLFQ's queues
-#define REFRESH_QUANTUM 10
+#define REFRESH_QUANTUM 50000
 
 
 /* define your data structures here: */

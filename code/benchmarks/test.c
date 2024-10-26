@@ -113,9 +113,11 @@ int val = 0;
 // }
 
 int foo() {
-    while (1) {
+    for (int i = 0; i < 10; i++) {
         printf("foo\n");
     }
+    printf("\n\n\n");
+    worker_exit(NULL);
 }
 
 int bar() {
@@ -124,15 +126,21 @@ int bar() {
     }
 }
 
-int threads[8] = {2,3,4,5,6,7,8,9};
+int* threads;
+int thread_num = 6;
 
 int main() {
-    for (int i = 1; i < 9; i++) {
-        printf("thread %d created\n", i+1);
-        pthread_create(threads+i-1, NULL, &foo, NULL);
+	threads = (pthread_t*)malloc(thread_num*sizeof(pthread_t));
+ 	for (int i = 0; i < thread_num; ++i) {
+		worker_create(&threads[i], NULL, &foo, NULL);
+		int priority = i % NUMPRIO;
+		pthread_setschedprio(threads[i], priority);
     }
 
-    while (1) {
-        
+    for (int i = 0; i < thread_num; ++i) {
+		worker_join(threads[i], NULL);
     }
+
+
+
 }

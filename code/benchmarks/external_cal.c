@@ -87,11 +87,13 @@ void verify() {
 		}
 		fclose(f);
 	}
+
+	printf("verified sum is: %d\n", sum);
 }
 
 
 void sig_handler(int signum) {
-	printf("%d\n", signum);
+	printf("ERROR %d\n", signum);
 }
 
 
@@ -137,8 +139,8 @@ int main(int argc, char **argv) {
 #endif
         }
 	
-	signal(SIGABRT, sig_handler);
-	signal(SIGSEGV, sig_handler);
+	// signal(SIGABRT, sig_handler);
+	// signal(SIGSEGV, sig_handler);
 
 	for (i = 0; i < thread_num; ++i)
 		pthread_join(thread[i], NULL);
